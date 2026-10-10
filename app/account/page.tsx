@@ -3,7 +3,6 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
 import {
   Heart,
   Package,
@@ -25,6 +24,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
+import { CustomerOrderCard } from '@/components/account/CustomerOrderCard';
+import type { Order } from '@/lib/orders';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,23 +37,6 @@ interface Address {
   city: string;
   state: string;
   pincode: string;
-}
-
-interface OrderItem {
-  id?: string;
-  name: string;
-  price?: string | number;
-  quantity: number;
-  image?: string;
-}
-
-interface Order {
-  id: string;
-  createdAt: string;
-  status: 'Pending' | 'Processing' | 'Shipped' | 'Delivered' | 'Cancelled';
-  items: OrderItem[];
-  total: number;
-  paymentMethod?: string;
 }
 
 const INDIAN_STATES = [
@@ -165,6 +149,7 @@ function AccountContent() {
   // Real Orders from Database (NO mock data)
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user?.id) {
@@ -174,17 +159,28 @@ function AccountContent() {
     }
 
     setOrdersLoading(true);
+    setOrdersError(null);
     fetch(`/api/orders?userId=${encodeURIComponent(user.id)}`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setOrders(data);
-        } else {
-          setOrders([]);
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || 'Unable to load your orders.');
         }
+        return data;
       })
-      .catch(() => {
+      .then((data) => {
+        const list: Order[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.orders)
+            ? data.orders
+            : [];
+        setOrders(list);
+      })
+      .catch((error: unknown) => {
         setOrders([]);
+        setOrdersError(
+          error instanceof Error ? error.message : 'Unable to load your orders.'
+        );
       })
       .finally(() => {
         setOrdersLoading(false);
@@ -519,6 +515,11 @@ function AccountContent() {
                       <Loader2 size={28} className="animate-spin text-[#083028]" />
                       <p className="text-xs">Fetching your orders from database...</p>
                     </div>
+                  ) : ordersError ? (
+                    <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-8 text-center">
+                      <p className="text-sm font-bold text-red-700">Unable to load your orders</p>
+                      <p className="mt-1 text-xs text-red-600">{ordersError}</p>
+                    </div>
                   ) : orders.length === 0 ? (
                     <div className="py-16 text-center space-y-3">
                       <Package size={44} className="mx-auto text-gray-300" />
@@ -535,65 +536,8 @@ function AccountContent() {
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {orders.map((ord) => (
-                        <div
-                          key={ord.id}
-                          className="p-5 rounded-2xl border border-gray-200/80 bg-gray-50/50 hover:bg-gray-50 transition-colors space-y-4"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-gray-200/60">
-                            <div>
-                              <span className="font-mono font-bold text-gray-900 text-sm">
-                                {ord.id}
-                              </span>
-                              <p className="text-xs text-gray-500">
-                                Placed on{' '}
-                                {new Date(ord.createdAt).toLocaleDateString('en-IN', {
-                                  day: 'numeric',
-                                  month: 'short',
-                                  year: 'numeric',
-                                })}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`px-3 py-1 rounded-full text-xs font-bold ${
-                                  ord.status === 'Delivered'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : ord.status === 'Shipped'
-                                    ? 'bg-blue-100 text-blue-800'
-                                    : 'bg-amber-100 text-amber-800'
-                                }`}
-                              >
-                                {ord.status}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            {ord.items.map((it, idx) => (
-                              <div key={idx} className="flex items-center justify-between text-xs sm:text-sm">
-                                <span className="font-semibold text-gray-800">
-                                  {it.name} <span className="text-gray-400 font-normal">× {it.quantity}</span>
-                                </span>
-                                {it.price && (
-                                  <span className="font-bold text-gray-900">₹{it.price}</span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-
-                          <div className="pt-3 border-t border-gray-200/60 flex items-center justify-between text-xs sm:text-sm">
-                            <span className="text-gray-500 font-medium">
-                              Payment: {ord.paymentMethod || 'Cash on Delivery'}
-                            </span>
-                            <div className="text-right">
-                              <span className="text-xs text-gray-400 mr-2">Total:</span>
-                              <span className="text-base sm:text-lg font-black text-[#083028]">
-                                ₹{ord.total.toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
+                      {orders.map((order) => (
+                        <CustomerOrderCard key={order.id} order={order} />
                       ))}
                     </div>
                   )}
@@ -914,6 +858,11 @@ function AccountContent() {
             <div className="p-4 overflow-y-auto space-y-3 flex-1 text-xs">
               {ordersLoading ? (
                 <div className="py-12 text-center text-gray-400">Loading orders...</div>
+              ) : ordersError ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-8 text-center">
+                  <p className="text-sm font-bold text-red-700">Unable to load your orders</p>
+                  <p className="mt-1 text-xs text-red-600">{ordersError}</p>
+                </div>
               ) : orders.length === 0 ? (
                 <div className="py-12 text-center space-y-2">
                   <Package size={36} className="mx-auto text-gray-300" />
@@ -927,25 +876,8 @@ function AccountContent() {
                   </Link>
                 </div>
               ) : (
-                orders.map((ord) => (
-                  <div key={ord.id} className="p-3.5 rounded-2xl border border-gray-200 bg-gray-50/60 space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="font-mono font-bold text-gray-900">{ord.id}</span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                        {ord.status}
-                      </span>
-                    </div>
-                    {ord.items.map((it, idx) => (
-                      <div key={idx} className="flex justify-between">
-                        <span>{it.name} ×{it.quantity}</span>
-                        <span className="font-bold">₹{it.price}</span>
-                      </div>
-                    ))}
-                    <div className="pt-2 border-t border-gray-200 flex justify-between font-bold">
-                      <span>Total:</span>
-                      <span className="text-[#083028]">₹{ord.total.toLocaleString()}</span>
-                    </div>
-                  </div>
+                orders.map((order) => (
+                  <CustomerOrderCard key={order.id} order={order} />
                 ))
               )}
             </div>

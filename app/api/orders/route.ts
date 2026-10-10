@@ -23,6 +23,9 @@ function generateOrderId(): string {
 // ---------------------------------------------------------------------------
 
 function mapDbOrder(row: Record<string, unknown>): Order {
+  const optionalString = (value: unknown): string | undefined =>
+    value ? String(value) : undefined;
+
   return {
     id: String(row.id),
     userId: String(row.user_id),
@@ -50,7 +53,22 @@ function mapDbOrder(row: Record<string, unknown>): Order {
     total: Number(row.total) || 0,
     couponCode: row.coupon_code ? String(row.coupon_code) : undefined,
     status: (row.status as OrderStatus) || 'Pending',
+    confirmedAt: optionalString(row.confirmed_at),
+    packedAt: optionalString(row.packed_at),
+    shippedAt: optionalString(row.shipped_at),
+    outForDeliveryAt: optionalString(row.out_for_delivery_at),
+    deliveredAt: optionalString(row.delivered_at),
+    cancelledAt: optionalString(row.cancelled_at),
+    shiprocketOrderId: optionalString(row.shiprocket_order_id),
+    shiprocketShipmentId: optionalString(row.shiprocket_shipment_id),
+    courierName: optionalString(row.courier_name),
+    awbNumber: optionalString(row.awb_number),
+    trackingUrl: optionalString(row.tracking_url),
+    trackingStatus: optionalString(row.tracking_status),
+    currentLocation: optionalString(row.current_location),
+    trackingUpdatedAt: optionalString(row.tracking_updated_at),
     createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : new Date().toISOString(),
+    updatedAt: optionalString(row.updated_at),
   };
 }
 
@@ -204,6 +222,7 @@ export async function POST(request: NextRequest) {
       ...(couponCode ? { couponCode } : {}),
       status: 'Pending',
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     // 1. Insert into Supabase Orders table
@@ -291,31 +310,97 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     const { orderId, status } = body;
 
-    if (!orderId || !status) {
+    const allowedStatuses: OrderStatus[] = [
+      'Pending',
+      'Confirmed',
+      'Processing',
+      'Packed',
+      'Shipped',
+      'Out for Delivery',
+      'Delivered',
+      'Cancelled',
+    ];
+
+    if (!orderId || !status || !allowedStatuses.includes(status as OrderStatus)) {
       return NextResponse.json(
-        { success: false, error: 'Missing orderId or status' },
+        { success: false, error: 'A valid orderId and status are required.' },
         { status: 400 }
       );
     }
 
+    const normalizedStatus = status as OrderStatus;
+    const now = new Date().toISOString();
+    const statusTimestampColumns: Partial<Record<OrderStatus, string>> = {
+      Confirmed: 'confirmed_at',
+      Processing: 'confirmed_at',
+      Packed: 'packed_at',
+      Shipped: 'shipped_at',
+      'Out for Delivery': 'out_for_delivery_at',
+      Delivered: 'delivered_at',
+      Cancelled: 'cancelled_at',
+    };
+    const timestampColumn = statusTimestampColumns[normalizedStatus];
+    const databaseUpdate: Record<string, string> = {
+      status: normalizedStatus,
+      updated_at: now,
+    };
+    if (timestampColumn) databaseUpdate[timestampColumn] = now;
+
     // 1. Update in Supabase
+    let databaseUpdated = false;
+    let databaseError: string | null = null;
     try {
       const supabase = getServiceSupabase();
-      await supabase
+      const { data, error } = await supabase
         .from('orders')
-        .update({ status, updated_at: new Date().toISOString() })
-        .eq('id', orderId);
-    } catch {
-      // continue to memory
+        .update(databaseUpdate)
+        .eq('id', orderId)
+        .select('id')
+        .maybeSingle();
+
+      if (error) {
+        databaseError = error.message;
+      } else {
+        databaseUpdated = Boolean(data?.id);
+      }
+    } catch (error) {
+      databaseError = error instanceof Error ? error.message : 'Unknown database error';
     }
 
     // 2. Update in-memory store
     const idx = memoryOrders.findIndex((o) => o.id === orderId);
     if (idx !== -1) {
-      memoryOrders[idx].status = status;
+      const order = memoryOrders[idx];
+      order.status = normalizedStatus;
+      order.updatedAt = now;
+      if (normalizedStatus === 'Confirmed' || normalizedStatus === 'Processing') {
+        order.confirmedAt = now;
+      } else if (normalizedStatus === 'Packed') {
+        order.packedAt = now;
+      } else if (normalizedStatus === 'Shipped') {
+        order.shippedAt = now;
+      } else if (normalizedStatus === 'Out for Delivery') {
+        order.outForDeliveryAt = now;
+      } else if (normalizedStatus === 'Delivered') {
+        order.deliveredAt = now;
+      } else if (normalizedStatus === 'Cancelled') {
+        order.cancelledAt = now;
+      }
     }
 
-    return NextResponse.json({ success: true, orderId, status });
+    if (!databaseUpdated && idx === -1) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: databaseError
+            ? `Unable to save the order status: ${databaseError}`
+            : 'Order not found.',
+        },
+        { status: databaseError ? 500 : 404 }
+      );
+    }
+
+    return NextResponse.json({ success: true, orderId, status: normalizedStatus });
   } catch (error) {
     console.error('[PATCH /api/orders] Error:', error);
     return NextResponse.json(

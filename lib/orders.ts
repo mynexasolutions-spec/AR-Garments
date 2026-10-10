@@ -24,8 +24,11 @@ export interface ShippingAddress {
 
 export type OrderStatus =
   | 'Pending'
+  | 'Confirmed'
   | 'Processing'
+  | 'Packed'
   | 'Shipped'
+  | 'Out for Delivery'
   | 'Delivered'
   | 'Cancelled';
 
@@ -46,7 +49,22 @@ export interface Order {
   total: number;
   couponCode?: string;
   status: OrderStatus;
+  confirmedAt?: string;
+  packedAt?: string;
+  shippedAt?: string;
+  outForDeliveryAt?: string;
+  deliveredAt?: string;
+  cancelledAt?: string;
+  shiprocketOrderId?: string;
+  shiprocketShipmentId?: string;
+  courierName?: string;
+  awbNumber?: string;
+  trackingUrl?: string;
+  trackingStatus?: string;
+  currentLocation?: string;
+  trackingUpdatedAt?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 // In-memory store (empty by default - only live DB/runtime data is stored)

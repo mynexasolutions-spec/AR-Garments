@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
         .update({
           payment_status: 'paid',
           razorpay_payment_id: payment.id,
-          status: 'Processing',
+          status: 'Confirmed',
           updated_at: new Date().toISOString(),
         })
         .eq('razorpay_order_id', payment.order_id);
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
         .from('orders')
         .update({
           payment_status: 'paid',
-          status: 'Processing',
+          status: 'Confirmed',
           updated_at: new Date().toISOString(),
         })
         .eq('razorpay_order_id', order.id);
