@@ -13,6 +13,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const CODE_PURPOSE = 'login';
+const INVALID_CODE_RESPONSE = { error: 'The login code is invalid or has expired.' };
 
 interface StoredLoginCode {
   id: string;
@@ -21,13 +22,12 @@ interface StoredLoginCode {
   expires_at: string;
 }
 
-const INVALID_CODE_RESPONSE = { error: 'The login code is invalid or has expired.' };
-
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const email = normalizeEmail(body.email);
     const code = typeof body.code === 'string' ? body.code.trim() : '';
+
     if (!/^\d{6}$/.test(code)) {
       return NextResponse.json(INVALID_CODE_RESPONSE, { status: 400 });
     }
@@ -74,10 +74,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(INVALID_CODE_RESPONSE, { status: 401 });
     }
 
+    // Query business_registrations directly (since users table was dropped)
     const { data: dbUser, error: userError } = await supabase
-      .from('users')
-      .select('id, name, email, phone, created_at')
-      .eq('email', email)
+      .from('business_registrations')
+      .select('id, full_name, applicant_email, mobile, status, created_at')
+      .eq('applicant_email', email)
       .maybeSingle();
 
     if (userError) {
@@ -104,9 +105,10 @@ export async function POST(request: NextRequest) {
 
     const user: AuthUser = {
       id: dbUser.id,
-      name: dbUser.name,
-      email: dbUser.email,
-      phone: dbUser.phone,
+      name: dbUser.full_name,
+      email: dbUser.applicant_email,
+      phone: dbUser.mobile,
+      userType: 'business',
       createdAt: dbUser.created_at,
     };
     const token = createSessionToken(user);
@@ -115,6 +117,7 @@ export async function POST(request: NextRequest) {
       message: 'Email login successful.',
       user,
       token,
+      businessStatus: dbUser.status,
     });
 
     response.cookies.set('ar_session', token, {

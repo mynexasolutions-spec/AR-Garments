@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySessionToken } from '@/lib/auth';
+import { getServiceSupabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,9 +26,31 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ authenticated: false, user: null }, { status: 200 });
     }
 
+    // 3. If business user, fetch live business status from DB
+    let businessStatus: 'pending' | 'approved' | 'rejected' | null = null;
+    if (user.userType === 'business') {
+      try {
+        const supabase = getServiceSupabase();
+        const { data: bizReg } = await supabase
+          .from('business_registrations')
+          .select('status')
+          .eq('applicant_email', user.email.toLowerCase())
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (bizReg) {
+          businessStatus = bizReg.status as 'pending' | 'approved' | 'rejected';
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
     return NextResponse.json({
       authenticated: true,
       user,
+      businessStatus,
     });
   } catch (error) {
     console.error('Auth verification error:', error);

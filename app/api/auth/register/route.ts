@@ -24,12 +24,12 @@ export async function POST(req: NextRequest) {
 
     const supabase = getServiceSupabase();
 
-    // 1. Check if user already exists in Supabase
+    // 1. Check if user already exists in business_registrations
     try {
       const { data: existing, error: checkError } = await supabase
-        .from('users')
-        .select('id, email')
-        .eq('email', cleanEmail)
+        .from('business_registrations')
+        .select('id, applicant_email')
+        .eq('applicant_email', cleanEmail)
         .maybeSingle();
 
       if (!checkError && existing) {
@@ -59,40 +59,48 @@ export async function POST(req: NextRequest) {
     const hashedPassword = hashPassword(password);
     let newUser: AuthUser | null = null;
 
-    // 2. Insert into Supabase
+    // 2. Insert into business_registrations
     try {
       const { data: inserted, error: insertError } = await supabase
-        .from('users')
+        .from('business_registrations')
         .insert({
-          name: cleanName,
-          email: cleanEmail,
+          full_name: cleanName,
+          applicant_email: cleanEmail,
           password: hashedPassword,
-          phone: cleanPhone,
+          mobile: cleanPhone,
+          shop_address: 'Standard Registration',
+          city: 'N/A',
+          state: 'N/A',
+          pincode: '000000',
+          business_type: 'retail_store',
+          status: 'pending',
         })
-        .select('id, name, email, phone, created_at')
+        .select('id, full_name, applicant_email, mobile, created_at')
         .single();
 
       if (!insertError && inserted) {
         newUser = {
           id: inserted.id,
-          name: inserted.name,
-          email: inserted.email,
-          phone: inserted.phone,
+          name: inserted.full_name,
+          email: inserted.applicant_email,
+          phone: inserted.mobile,
+          userType: 'business',
           createdAt: inserted.created_at,
         };
       }
     } catch {
-      // Supabase table not created yet, proceed to memory
+      // proceed to memory
     }
 
-    // 3. Fallback to memory if DB insert didn't happen
+    // 3. Fallback to memory
     if (!newUser) {
       const fallbackUser = {
-        id: `usr-${Date.now()}`,
+        id: `biz-${Date.now()}`,
         name: cleanName,
         email: cleanEmail,
         phone: cleanPhone,
         passwordHash: hashedPassword,
+        userType: 'business' as const,
         createdAt: new Date().toISOString(),
       };
       memoryUsers.push(fallbackUser);
@@ -101,6 +109,7 @@ export async function POST(req: NextRequest) {
         name: fallbackUser.name,
         email: fallbackUser.email,
         phone: fallbackUser.phone,
+        userType: 'business',
         createdAt: fallbackUser.createdAt,
       };
     }
@@ -124,7 +133,7 @@ export async function POST(req: NextRequest) {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       path: '/',
-      maxAge: 60 * 60 * 24 * 7, // 7 days
+      maxAge: 60 * 60 * 24 * 7,
     });
 
     return response;

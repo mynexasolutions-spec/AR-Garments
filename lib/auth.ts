@@ -5,6 +5,7 @@ export interface AuthUser {
   name: string;
   email: string;
   phone?: string;
+  userType?: 'customer' | 'business';
   createdAt?: string;
 }
 
@@ -40,6 +41,7 @@ export function createSessionToken(user: AuthUser): string {
     name: user.name,
     email: user.email,
     phone: user.phone || '',
+    userType: user.userType || 'customer',
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7, // 7 days
   };
@@ -67,6 +69,7 @@ export function verifySessionToken(token: string): AuthUser | null {
       name: payload.name,
       email: payload.email,
       phone: payload.phone,
+      userType: payload.userType || 'customer',
     };
   } catch {
     return null;

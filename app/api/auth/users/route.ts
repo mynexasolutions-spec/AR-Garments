@@ -14,39 +14,25 @@ interface UserOutput {
 
 export const dynamic = 'force-dynamic';
 
-// GET /api/auth/users — list all registered users with their order count (admin use)
+// GET /api/auth/users — list all registered accounts (from business_registrations)
 export async function GET() {
   try {
-    // 1. Try querying Supabase
+    // 1. Try querying business_registrations first
     try {
       const supabase = getServiceSupabase();
-      const { data: dbUsers, error: usersError } = await supabase
-        .from('users')
-        .select('id, name, email, phone, created_at')
+      const { data: dbBiz, error: bizError } = await supabase
+        .from('business_registrations')
+        .select('id, full_name, applicant_email, mobile, created_at')
         .order('created_at', { ascending: false });
 
-      if (!usersError && Array.isArray(dbUsers) && dbUsers.length > 0) {
-        // Fetch order counts from Supabase
-        const { data: dbOrders } = await supabase
-          .from('orders')
-          .select('user_id');
-
-        const orderCounts: Record<string, number> = {};
-        if (Array.isArray(dbOrders)) {
-          dbOrders.forEach((o: { user_id: string }) => {
-            if (o.user_id) {
-              orderCounts[o.user_id] = (orderCounts[o.user_id] || 0) + 1;
-            }
-          });
-        }
-
-        const formatted: UserOutput[] = dbUsers.map((u) => ({
-          id: String(u.id),
-          name: String(u.name),
-          email: String(u.email),
-          phone: u.phone ? String(u.phone) : '',
-          createdAt: u.created_at ? new Date(String(u.created_at)).toISOString() : new Date().toISOString(),
-          orderCount: orderCounts[String(u.id)] || 0,
+      if (!bizError && Array.isArray(dbBiz) && dbBiz.length > 0) {
+        const formatted: UserOutput[] = dbBiz.map((b) => ({
+          id: String(b.id),
+          name: String(b.full_name),
+          email: String(b.applicant_email),
+          phone: b.mobile ? String(b.mobile) : '',
+          createdAt: b.created_at ? new Date(String(b.created_at)).toISOString() : new Date().toISOString(),
+          orderCount: 0,
         }));
 
         return NextResponse.json(formatted);

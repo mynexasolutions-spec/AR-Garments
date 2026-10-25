@@ -49,9 +49,9 @@ export async function POST(request: NextRequest) {
     const email = normalizeEmail(body.email);
     const supabase = getServiceSupabase();
     const { data: existingUser, error: userError } = await supabase
-      .from('users')
+      .from('business_registrations')
       .select('id')
-      .eq('email', email)
+      .eq('applicant_email', email)
       .maybeSingle();
 
     if (userError) {

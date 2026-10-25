@@ -19,30 +19,35 @@ export async function POST(req: NextRequest) {
 
     let foundUser: AuthUser | null = null;
     let storedPasswordHash: string | null = null;
+    let businessStatus: 'pending' | 'approved' | 'rejected' | null = null;
 
-    // 1. Check Supabase
+    // 1. Primary check: Query business_registrations directly
     try {
-      const { data: dbUser, error } = await supabase
-        .from('users')
-        .select('id, name, email, password, phone, created_at')
-        .eq('email', cleanEmail)
+      const { data: bizUser, error: bizError } = await supabase
+        .from('business_registrations')
+        .select('id, full_name, applicant_email, password, mobile, status, business_type, created_at')
+        .eq('applicant_email', cleanEmail)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
-      if (!error && dbUser) {
+      if (!bizError && bizUser && bizUser.password) {
         foundUser = {
-          id: dbUser.id,
-          name: dbUser.name,
-          email: dbUser.email,
-          phone: dbUser.phone,
-          createdAt: dbUser.created_at,
+          id: bizUser.id,
+          name: bizUser.full_name,
+          email: bizUser.applicant_email,
+          phone: bizUser.mobile,
+          userType: 'business',
+          createdAt: bizUser.created_at,
         };
-        storedPasswordHash = dbUser.password;
+        storedPasswordHash = bizUser.password;
+        businessStatus = bizUser.status as 'pending' | 'approved' | 'rejected';
       }
-    } catch {
-      // Table doesn't exist yet, check memory
+    } catch (e) {
+      console.warn('Error reading business_registrations during login:', e);
     }
 
-    // 2. Check memory fallback if not in DB
+    // 2. Memory fallback if not found in database yet
     if (!foundUser) {
       const memUser = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
       if (memUser) {
@@ -51,13 +56,14 @@ export async function POST(req: NextRequest) {
           name: memUser.name,
           email: memUser.email,
           phone: memUser.phone,
+          userType: memUser.userType || 'business',
           createdAt: memUser.createdAt,
         };
         storedPasswordHash = memUser.passwordHash;
       }
     }
 
-    // If user not found
+    // If account not found
     if (!foundUser || !storedPasswordHash) {
       return NextResponse.json(
         {
@@ -85,6 +91,7 @@ export async function POST(req: NextRequest) {
       message: 'Login successful!',
       user: foundUser,
       token,
+      businessStatus,
     });
 
     // Set cookie

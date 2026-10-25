@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -29,6 +29,7 @@ const navItems = [
   { label: 'Orders', href: '/admin/orders', icon: Package },
   { label: 'Customer Queries', href: '/admin/contacts', icon: MessageSquare },
   { label: 'Registered Users', href: '/admin/users', icon: Users },
+  { label: 'Business Registrations', href: '/admin/business-registrations', icon: Store },
   { label: 'Products & Catalog', href: '/admin/products', icon: ShoppingBag },
   { label: 'Categories', href: '/admin/categories', icon: FolderTree },
   { label: 'Product Reviews', href: '/admin/reviews', icon: Star },
@@ -95,7 +96,7 @@ export default function AdminSidebar() {
             className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold text-white/80 hover:bg-white/10 transition-colors"
           >
             <Layers size={15} />
-            <span>View Live Website ↗</span>
+            <span>View Live Website â†—</span>
           </Link>
         </div>
       </nav>
@@ -152,3 +153,4 @@ export default function AdminSidebar() {
     </>
   );
 }
+

@@ -16,11 +16,6 @@ export const dynamic = 'force-dynamic';
 
 const CODE_PURPOSE = 'login';
 
-const CODE_SENT_RESPONSE = {
-  success: true,
-  message: 'A login code has been sent to your email.',
-};
-
 const ACCOUNT_NOT_FOUND_RESPONSE = {
   success: false,
   code: 'ACCOUNT_NOT_FOUND',
@@ -32,10 +27,12 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as Record<string, unknown>;
     const email = normalizeEmail(body.email);
     const supabase = getServiceSupabase();
+
+    // Query business_registrations table (since users table was dropped)
     const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('id, name, email')
-      .eq('email', email)
+      .from('business_registrations')
+      .select('id, full_name, applicant_email')
+      .eq('applicant_email', email)
       .maybeSingle();
 
     if (userError) {
@@ -61,7 +58,8 @@ export async function POST(request: NextRequest) {
     }
     if (recentCode) {
       return NextResponse.json({
-        ...CODE_SENT_RESPONSE,
+        success: true,
+        message: 'A login code was already sent to your email.',
         retryAfterSeconds: EMAIL_LOGIN_RESEND_SECONDS,
       });
     }
@@ -79,13 +77,15 @@ export async function POST(request: NextRequest) {
 
     const code = generateEmailLoginCode();
     const codeHash = hashEmailLoginCode(email, code);
-    const expiresAt = new Date(
-      Date.now() + EMAIL_LOGIN_CODE_TTL_MINUTES * 60 * 1000
-    ).toISOString();
-
+    const expiresAt = new Date(Date.now() + EMAIL_LOGIN_CODE_TTL_MINUTES * 60 * 1000).toISOString();
     const { data: loginCode, error: insertError } = await supabase
       .from('email_login_codes')
-      .insert({ email, purpose: CODE_PURPOSE, code_hash: codeHash, expires_at: expiresAt })
+      .insert({
+        email,
+        purpose: CODE_PURPOSE,
+        code_hash: codeHash,
+        expires_at: expiresAt,
+      })
       .select('id')
       .single();
 
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
     try {
       const messageId = await sendLoginCode({
         recipientEmail: email,
-        recipientName: String(user.name || 'Customer'),
+        recipientName: String(user.full_name || 'Business Partner'),
         code,
         expiresInMinutes: EMAIL_LOGIN_CODE_TTL_MINUTES,
       });
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
         .delete()
         .eq('id', loginCode.id);
       if (cleanupError) {
-        console.error('Unable to remove unsent email login code', {
+        console.error('Unable to remove unsent login code', {
           loginCodeId: loginCode.id,
           databaseError: cleanupError.message,
         });
@@ -119,7 +119,11 @@ export async function POST(request: NextRequest) {
       throw error;
     }
 
-    return NextResponse.json(CODE_SENT_RESPONSE);
+    return NextResponse.json({
+      success: true,
+      message: 'A login code has been sent to your email.',
+      retryAfterSeconds: EMAIL_LOGIN_RESEND_SECONDS,
+    });
   } catch (error) {
     if (error instanceof InvalidEmailError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
@@ -129,10 +133,16 @@ export async function POST(request: NextRequest) {
       error instanceof EmailLoginConfigurationError
     ) {
       console.error('Email login configuration error', { error: error.message });
-      return NextResponse.json({ error: 'Email login is not configured on the server.' }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Email login is not configured on the server.' },
+        { status: 500 }
+      );
     }
     if (error instanceof BrevoApiError) {
-      console.error('Brevo login email failed', { status: error.status, error: error.message });
+      console.error('Brevo login email failed', {
+        status: error.status,
+        error: error.message,
+      });
       return NextResponse.json(
         { error: 'The login email could not be sent. Please try again.' },
         { status: 502 }

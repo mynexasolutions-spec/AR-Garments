@@ -97,9 +97,9 @@ export async function POST(request: NextRequest) {
     }
 
     const { data: existingUser, error: existingUserError } = await supabase
-      .from('users')
+      .from('business_registrations')
       .select('id')
-      .eq('email', email)
+      .eq('applicant_email', email)
       .maybeSingle();
 
     if (existingUserError) {
@@ -120,9 +120,20 @@ export async function POST(request: NextRequest) {
 
     const inaccessiblePassword = hashPassword(crypto.randomBytes(32).toString('base64url'));
     const { data: insertedUser, error: insertError } = await supabase
-      .from('users')
-      .insert({ name, email, password: inaccessiblePassword, phone })
-      .select('id, name, email, phone, created_at')
+      .from('business_registrations')
+      .insert({
+        full_name: name,
+        mobile: phone,
+        applicant_email: email,
+        password: inaccessiblePassword,
+        shop_address: 'Registered via Email Code',
+        city: 'N/A',
+        state: 'N/A',
+        pincode: '000000',
+        business_type: 'retail_store',
+        status: 'pending',
+      })
+      .select('id, full_name, applicant_email, mobile, created_at')
       .single();
 
     if (insertError || !insertedUser) {
@@ -156,9 +167,10 @@ export async function POST(request: NextRequest) {
 
     const user: AuthUser = {
       id: insertedUser.id,
-      name: insertedUser.name,
-      email: insertedUser.email,
-      phone: insertedUser.phone,
+      name: insertedUser.full_name,
+      email: insertedUser.applicant_email,
+      phone: insertedUser.mobile,
+      userType: 'business',
       createdAt: insertedUser.created_at,
     };
     const token = createSessionToken(user);
