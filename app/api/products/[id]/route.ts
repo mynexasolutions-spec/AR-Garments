@@ -11,15 +11,6 @@ const NO_STORE_HEADERS = {
   'Vercel-CDN-Cache-Control': 'no-store',
 };
 
-const PRODUCT_COLUMNS = 'id, name, price, numeric_price, category, category_id, subcategory_id, image, images, stock, active, is_new_arrival, is_best_seller, sort_order, description, specification, shipping_care, youtube_url, facebook_url, instagram_url, created_at';
-const LEGACY_PRODUCT_COLUMNS = 'id, name, price, numeric_price, category, image, images, stock, active, is_new_arrival, is_best_seller, sort_order, description, specification, shipping_care, youtube_url, facebook_url, instagram_url, created_at';
-
-function isMissingHierarchyColumn(error: { code?: string; message?: string } | null): boolean {
-  return error?.code === '42703'
-    || Boolean(error?.message?.includes('category_id'))
-    || Boolean(error?.message?.includes('subcategory_id'));
-}
-
 function getAdminClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -38,19 +29,11 @@ export async function GET(
   }
 
   const supabase = getAdminClient();
-  let { data, error } = await supabase
+  const { data, error } = await supabase
     .from('products')
-    .select(PRODUCT_COLUMNS)
+    .select('*')
     .eq('id', id)
     .single();
-
-  if (isMissingHierarchyColumn(error)) {
-    ({ data, error } = await supabase
-      .from('products')
-      .select(LEGACY_PRODUCT_COLUMNS)
-      .eq('id', id)
-      .single());
-  }
 
   if (error || !data) {
     return NextResponse.json({ error: 'Product not found' }, { status: 404 });
