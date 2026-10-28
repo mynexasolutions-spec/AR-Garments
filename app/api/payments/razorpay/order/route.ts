@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const shippingAddress = parseShippingAddress(body.shippingAddress);
-    const pricing = await calculateCheckoutPricing(body.items, body.couponCode);
+    const pricing = await calculateCheckoutPricing(body.items, body.couponCode, shippingAddress.pincode);
     const expectedTotal = Number(body.expectedTotal);
 
     if (!Number.isFinite(expectedTotal) || Math.abs(expectedTotal - pricing.total) > 0.001) {

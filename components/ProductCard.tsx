@@ -5,6 +5,9 @@ import { ShoppingCart, Heart } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useCart } from '@/context/CartContext';
+import { useShippingSettings } from '@/context/ShippingSettingsContext';
+import { calculateZoneDelivery, DEFAULT_ZONE_SETTINGS } from '@/lib/zoneShipping';
+import { Truck } from 'lucide-react';
 import { useWishlist } from '@/context/WishlistContext';
 
 export interface Product {
@@ -28,8 +31,29 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
   const [added, setAdded] = useState(false);
   const { addToCart } = useCart();
   const { toggleWishlist, isInWishlist } = useWishlist();
+  const { zoneSettings } = useShippingSettings();
 
   const isFavorited = isInWishlist(product.id);
+
+  // Read saved location or default to determine if Free Delivery is active for this product
+  let savedPin = '';
+  if (typeof window !== 'undefined') {
+    try {
+      const savedInfo = localStorage.getItem('ar_user_pincode_info');
+      if (savedInfo) {
+        const parsed = JSON.parse(savedInfo);
+        savedPin = parsed.pincode || '';
+      }
+    } catch {}
+  }
+  const numericPrice = product.numericPrice || Number(String(product.price).replace(/[^0-9.]/g, '')) || 0;
+  const zoneResult = calculateZoneDelivery(
+    numericPrice,
+    savedPin,
+    zoneSettings && zoneSettings.length > 0 ? zoneSettings : DEFAULT_ZONE_SETTINGS
+  );
+  // Conditional UI: Badge only renders if Zone is ON and product qualifies
+  const showFreeDeliveryBadge = zoneResult.zone.isActive && zoneResult.isFreeDelivery;
 
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -102,9 +126,17 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
           <h3 className="font-bold text-gray-900 text-xs sm:text-sm md:text-base leading-snug mb-1 sm:mb-2 line-clamp-2 group-hover:text-[#083028] transition-colors">
             {product.name}
           </h3>
-          <p className="text-xs sm:text-sm md:text-base font-bold text-[#083028] mb-1 sm:mb-2">
-            {product.price}
-          </p>
+          <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2">
+            <p className="text-xs sm:text-sm md:text-base font-bold text-[#083028]">
+              {product.price}
+            </p>
+            {showFreeDeliveryBadge && (
+              <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/60">
+                <Truck size={10} className="shrink-0" />
+                <span>Free Delivery</span>
+              </span>
+            )}
+          </div>
         </div>
       </Link>
 

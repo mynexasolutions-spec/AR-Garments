@@ -3,7 +3,9 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { ArrowLeft, Search, User, ShoppingBag, ChevronDown, Heart } from 'lucide-react';
+import { ArrowLeft, Search, User, ShoppingBag, ChevronDown, Heart, MapPin, Navigation, X, Check, Loader2 } from 'lucide-react';
+import { useShippingSettings } from '@/context/ShippingSettingsContext';
+import { calculateZoneDelivery, DEFAULT_ZONE_SETTINGS } from '@/lib/zoneShipping';
 import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
 import { useWishlist } from '@/context/WishlistContext';
@@ -41,6 +43,145 @@ export default function Header({ categoryMobileMode }: HeaderProps) {
   const [categories, setCategories] = useState<NavCategory[]>(DEFAULT_CATEGORIES);
 
   const { user, logout } = useAuth();
+  const { zoneSettings } = useShippingSettings();
+  const [locationModalOpen, setLocationModalOpen] = useState(false);
+  const [userPincode, setUserPincode] = useState('');
+  const [userCity, setUserCity] = useState('');
+  const [isLocating, setIsLocating] = useState(false);
+
+  // Load saved live location on refresh with top priority over static user profile
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('ar_user_pincode_info');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.city || parsed.pincode) {
+          setUserPincode(parsed.pincode || '');
+          setUserCity(parsed.city || '');
+          return;
+        }
+      }
+    } catch {}
+
+    if (user?.pincode) {
+      setUserPincode(user.pincode);
+      setUserCity(user.city || '');
+    }
+  }, [user]);
+
+  const handleLiveLocation = () => {
+    if (typeof window === 'undefined') return;
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser. Please click Change to type your Pincode.');
+      setLocationModalOpen(true);
+      return;
+    }
+
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+
+          let detectedPin = '';
+          let detectedCity = '';
+
+          // 1. Try BigDataCloud reverse geocode client (high accuracy city & postcode in India)
+          try {
+            const bdcRes = await fetch(
+              'https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=' + lat + '&longitude=' + lon + '&localityLanguage=en'
+            );
+            if (bdcRes.ok) {
+              const bdcData = await bdcRes.json();
+              if (bdcData.postcode) {
+                detectedPin = String(bdcData.postcode).replace(/\D/g, '').slice(0, 6);
+              }
+              detectedCity = bdcData.city || bdcData.locality || bdcData.principalSubdivision || '';
+            }
+          } catch (e) {
+            console.warn('BigDataCloud error:', e);
+          }
+
+          // 2. Fallback to Nominatim if needed
+          if (!detectedPin || detectedPin.length !== 6 || !detectedCity) {
+            try {
+              const nomRes = await fetch(
+                'https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lon
+              );
+              if (nomRes.ok) {
+                const nomData = await nomRes.json();
+                const nomPin = nomData?.address?.postcode;
+                if (!detectedPin && nomPin) {
+                  detectedPin = String(nomPin).replace(/\D/g, '').slice(0, 6);
+                }
+                if (!detectedCity) {
+                  detectedCity =
+                    nomData?.address?.city ||
+                    nomData?.address?.town ||
+                    nomData?.address?.village ||
+                    nomData?.address?.state_district ||
+                    nomData?.address?.state ||
+                    '';
+                }
+              }
+            } catch (e) {
+              console.warn('Nominatim error:', e);
+            }
+          }
+
+          // 3. If 6-digit pincode detected, verify district from India Post API
+          if (detectedPin && detectedPin.length === 6) {
+            try {
+              const postRes = await fetch('/api/lookup-pincode?pincode=' + detectedPin);
+              if (postRes.ok) {
+                const postData = await postRes.json();
+                if (postData.city) {
+                  detectedCity = postData.city;
+                }
+              }
+            } catch (e) {
+              console.warn('India Post lookup error:', e);
+            }
+          }
+
+          if (detectedPin || detectedCity) {
+            const cleanPin = detectedPin ? detectedPin.slice(0, 6) : '';
+            const finalCity = detectedCity || (cleanPin ? ('Pin ' + cleanPin) : 'My Location');
+            setUserPincode(cleanPin);
+            setUserCity(finalCity);
+            localStorage.setItem('ar_user_pincode_info', JSON.stringify({ pincode: cleanPin, city: finalCity }));
+            window.dispatchEvent(
+              new CustomEvent('ar_location_changed', { detail: { pincode: cleanPin, city: finalCity } })
+            );
+            setLocationModalOpen(false);
+          } else {
+            alert('Could not determine exact location. Please enter your Pincode.');
+            setLocationModalOpen(true);
+          }
+        } catch (err) {
+          console.error('Location resolution error:', err);
+          alert('Could not determine exact location. Please enter your Pincode.');
+          setLocationModalOpen(true);
+        } finally {
+          setIsLocating(false);
+        }
+      },
+      (error) => {
+        setIsLocating(false);
+        console.warn('Geolocation error:', error);
+        if (error.code === error.PERMISSION_DENIED) {
+          alert('Location permission was denied in your browser. Please click Change to type your Pincode.');
+        } else {
+          alert('Unable to retrieve GPS location. Please click Change to type your Pincode.');
+        }
+        setLocationModalOpen(true);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+
+  const activeZone = calculateZoneDelivery(0, userPincode, zoneSettings && zoneSettings.length > 0 ? zoneSettings : DEFAULT_ZONE_SETTINGS);
   const { totalCount } = useCart();
   const { wishlistCount } = useWishlist();
 
@@ -83,6 +224,7 @@ export default function Header({ categoryMobileMode }: HeaderProps) {
 
   return (
     <header className="sticky top-0 z-50 border-b border-gray-100/80 bg-white/95 shadow-sm backdrop-blur-xl">
+
       {/* Main Navigation */}
       <div className={`container mx-auto px-4 py-3 ${categoryMobileMode ? 'hidden sm:block' : ''}`}>
         <div className="flex justify-between items-center">
@@ -175,6 +317,34 @@ export default function Header({ categoryMobileMode }: HeaderProps) {
           <div className="flex items-center gap-1.5 sm:gap-2.5">
             {/* Mobile About Us & Contact Us links (on desktop they appear in main nav) */}
 
+
+            {/* Delivery Location Pill Button - Direct 1-Click Live Location */}
+            <button
+              type="button"
+              onClick={handleLiveLocation}
+              disabled={isLocating}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-full border border-gray-200/90 bg-white hover:border-[#083028]/30 hover:bg-emerald-50/30 text-gray-700 hover:text-[#083028] transition-all text-xs font-semibold shadow-xs"
+              title="Click to fetch your live location"
+            >
+              {isLocating ? (
+                <Loader2 size={14} className="text-emerald-700 animate-spin shrink-0" />
+              ) : (
+                <MapPin size={14} className="text-emerald-700 shrink-0" />
+              )}
+              <div className="text-left hidden sm:block leading-tight">
+                <span className="block text-[9px] text-gray-400 font-bold uppercase tracking-wider">
+                  {isLocating ? 'Detecting...' : 'Deliver to'}
+                </span>
+                <span className="block text-[11px] font-bold text-gray-800 truncate max-w-[110px]">
+                  {isLocating
+                    ? 'Fetching GPS...'
+                    : userCity || (userPincode ? 'Pin ' + userPincode : 'Use Live Location')}
+                </span>
+              </div>
+              <span className="sm:hidden text-[11px] font-bold text-gray-800">
+                {isLocating ? '...' : userCity || userPincode || 'Live Location'}
+              </span>
+            </button>
 
             {/* Search Button */}
             <button
@@ -273,6 +443,70 @@ export default function Header({ categoryMobileMode }: HeaderProps) {
         onClose={() => setSearchModalOpen(false)}
         categories={categories}
       />
+
+      {/* Interactive Delivery Location Modal (Live Location Only) */}
+      {locationModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-gray-100">
+            <button
+              type="button"
+              onClick={() => setLocationModalOpen(false)}
+              className="absolute right-4 top-4 rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="flex items-center gap-2.5 mb-4">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-[#083028]">
+                <MapPin size={22} className="text-[#083028]" />
+              </span>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Delivery Location</h3>
+                <p className="text-xs text-gray-500">Live zone delivery pricing will be applied</p>
+              </div>
+            </div>
+
+            {/* Current Active Location Card */}
+            {(userCity || userPincode) && (
+              <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3.5 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-emerald-800 tracking-wider">Active Location</span>
+                  <p className="text-sm font-bold text-gray-900">
+                    {userCity} {userPincode ? '(' + userPincode + ')' : ''}
+                  </p>
+                  <p className="text-xs text-emerald-700 font-semibold mt-0.5">
+                    {activeZone.zone.zoneName} • {activeZone.zone.isActive ? 'Free delivery above ₹' + activeZone.zone.freeDeliveryThreshold.toLocaleString('en-IN') : 'Standard Delivery ₹' + activeZone.zone.standardDeliveryFee}
+                  </p>
+                </div>
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-white">
+                  <Check size={16} />
+                </span>
+              </div>
+            )}
+
+            {/* Live GPS Button */}
+            <button
+              type="button"
+              onClick={handleLiveLocation}
+              disabled={isLocating}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#083028] py-3 px-4 text-xs font-bold text-white shadow-sm hover:bg-[#06241e] transition-all disabled:opacity-60"
+            >
+              {isLocating ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Detecting GPS Location...</span>
+                </>
+              ) : (
+                <>
+                  <Navigation size={16} />
+                  <span>Use My Live Location</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

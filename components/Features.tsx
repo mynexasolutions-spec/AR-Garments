@@ -4,16 +4,16 @@ import { Truck, RotateCcw, DollarSign, Shield } from 'lucide-react';
 import { useShippingSettings } from '@/context/ShippingSettingsContext';
 
 export default function Features() {
-  const { settings } = useShippingSettings();
+  const { settings, zoneSettings, isFreeDeliveryGloballyActive } = useShippingSettings();
   const features = [
     {
       icon: Truck,
-      title: settings?.freeShippingEnabled ? 'Free Delivery' : 'Fixed Delivery',
-      description: settings
-        ? settings.freeShippingEnabled
-          ? `Above ₹${settings.freeShippingThreshold.toLocaleString('en-IN')}`
-          : `₹${settings.standardShippingCharge.toLocaleString('en-IN')} per order`
-        : 'Calculated at checkout',
+      title: isFreeDeliveryGloballyActive && settings?.freeShippingEnabled ? 'Free Delivery' : 'Fast Delivery',
+      description: isFreeDeliveryGloballyActive && settings?.freeShippingEnabled
+        ? `Above ₹${settings.freeShippingThreshold.toLocaleString('en-IN')}`
+        : settings
+        ? `Standard ₹${settings.standardShippingCharge.toLocaleString('en-IN')} per order`
+        : 'Safe & express delivery',
     },
     {
       icon: RotateCcw,

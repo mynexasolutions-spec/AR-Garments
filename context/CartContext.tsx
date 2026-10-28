@@ -5,6 +5,7 @@ import { Coupon } from '@/lib/adminData';
 import { useToast } from '@/context/ToastContext';
 import { useShippingSettings } from '@/context/ShippingSettingsContext';
 import { calculateShippingCharge, ShippingSettings } from '@/lib/shipping';
+import { ZoneShippingSetting } from '@/lib/zoneShipping';
 
 export interface CartItem {
   id: string;

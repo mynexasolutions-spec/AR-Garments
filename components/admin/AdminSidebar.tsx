@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -34,7 +34,7 @@ const navItems = [
   { label: 'Categories', href: '/admin/categories', icon: FolderTree },
   { label: 'Product Reviews', href: '/admin/reviews', icon: Star },
   { label: 'Coupons & Discounts', href: '/admin/coupons', icon: Ticket },
-  { label: 'Shipping Settings', href: '/admin/shipping-settings', icon: Truck },
+  { label: 'Zone Active / Shipping', href: '/admin/shipping-settings', icon: Truck },
   { label: 'Newsletter', href: '/admin/newsletter', icon: Mail },
   { label: 'Home Page', href: '/admin/homepage', icon: Home },
 ];

@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
         const supabase = getServiceSupabase();
         const { data: bizReg } = await supabase
           .from('business_registrations')
-          .select('status')
+          .select('status, pincode, city, state')
           .eq('applicant_email', user.email.toLowerCase())
           .order('created_at', { ascending: false })
           .limit(1)
@@ -41,6 +41,9 @@ export async function GET(req: NextRequest) {
 
         if (bizReg) {
           businessStatus = bizReg.status as 'pending' | 'approved' | 'rejected';
+          (user as any).pincode = (bizReg as any).pincode || '';
+          (user as any).city = (bizReg as any).city || '';
+          (user as any).state = (bizReg as any).state || '';
         }
       } catch {
         // Non-fatal

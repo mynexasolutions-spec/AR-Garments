@@ -31,6 +31,8 @@ import { useCart } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
 import { useWishlist } from '@/context/WishlistContext';
 import { Coupon, Product, defaultUnifiedProducts } from '@/lib/adminData';
+import { useShippingSettings } from '@/context/ShippingSettingsContext';
+import { calculateZoneDelivery, DEFAULT_ZONE_SETTINGS } from '@/lib/zoneShipping';
 
 export default function CartPage() {
   const router = useRouter();
@@ -58,6 +60,20 @@ export default function CartPage() {
 
   const [couponCodeInput, setCouponCodeInput] = useState('');
   const [couponError, setCouponError] = useState<string | null>(null);
+
+  const { zoneSettings } = useShippingSettings();
+  let cartUserPin = '';
+  if (typeof window !== 'undefined') {
+    try {
+      const pinInfo = localStorage.getItem('ar_user_pincode_info');
+      if (pinInfo) cartUserPin = JSON.parse(pinInfo).pincode || '';
+    } catch {}
+  }
+  const cartActiveZone = calculateZoneDelivery(
+    subtotal,
+    cartUserPin,
+    zoneSettings && zoneSettings.length > 0 ? zoneSettings : DEFAULT_ZONE_SETTINGS
+  );
   const [couponLoading, setCouponLoading] = useState(false);
   const [availableCoupons, setAvailableCoupons] = useState<Coupon[]>([]);
   const [showCouponsList, setShowCouponsList] = useState(false);
@@ -479,13 +495,12 @@ export default function CartPage() {
                     </span>
                   </div>
 
-                  {shippingSettings?.freeShippingEnabled &&
-                    subtotal < shippingSettings.freeShippingThreshold &&
+                  {/* Free Delivery Threshold Box - Destroyed / Hidden when Zone is OFF */}
+                  {cartActiveZone.zone.isActive &&
+                    cartActiveZone.amountNeededForFreeDelivery > 0 &&
                     shipping > 0 && (
                     <p className="text-[11px] bg-amber-50 text-amber-800 p-2 rounded-lg leading-tight">
-                      Add ₹{(
-                        shippingSettings.freeShippingThreshold - subtotal
-                      ).toLocaleString('en-IN')} more to qualify for{' '}
+                      Add ₹{cartActiveZone.amountNeededForFreeDelivery.toLocaleString('en-IN')} more to qualify for{' '}
                       <strong>FREE Delivery</strong>!
                     </p>
                   )}
@@ -626,11 +641,9 @@ export default function CartPage() {
                   <div className="flex flex-col items-center">
                     <Truck size={14} className="text-[#083028] mb-0.5" />
                     <span>
-                      {shippingSettings?.freeShippingEnabled
-                        ? `Free over ₹${shippingSettings.freeShippingThreshold.toLocaleString('en-IN')}`
-                        : shippingSettings
-                          ? `Shipping ₹${shippingSettings.standardShippingCharge.toLocaleString('en-IN')}`
-                          : 'Shipping'}
+                      {cartActiveZone.zone.isActive
+                        ? `Free over ₹${cartActiveZone.zone.freeDeliveryThreshold.toLocaleString('en-IN')}`
+                        : `Shipping ₹${cartActiveZone.zone.standardDeliveryFee.toLocaleString('en-IN')}`}
                     </span>
                   </div>
                   <div className="flex flex-col items-center">

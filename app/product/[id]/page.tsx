@@ -18,6 +18,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { useWishlist } from '@/context/WishlistContext';
 import { useShippingSettings } from '@/context/ShippingSettingsContext';
+import { calculateZoneDelivery, DEFAULT_ZONE_SETTINGS, DetectedZoneResult } from '@/lib/zoneShipping';
+import { MapPin, Navigation } from 'lucide-react';
 
 interface ProductData {
   id: string;
@@ -63,7 +65,10 @@ export default function ProductDetailPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { isInWishlist, toggleWishlist } = useWishlist();
-  const { settings: shippingSettings } = useShippingSettings();
+  const { settings: shippingSettings, zoneSettings } = useShippingSettings();
+  const [deliveryPincode, setDeliveryPincode] = useState<string>('');
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [detectedLocationName, setDetectedLocationName] = useState('');
 
   const [product, setProduct] = useState<ProductData | null>(null);
   const [relatedProducts, setRelatedProducts] = useState<ProductData[]>([]);
@@ -78,6 +83,94 @@ export default function ProductDetailPage() {
   const [addedToCart, setAddedToCart] = useState(false);
   const [activeTab, setActiveTab] = useState<'description' | 'specifications' | 'shipping' | 'reviews'>('description');
   const [copiedShare, setCopiedShare] = useState(false);
+
+  // Automatically initialize pincode with top priority on live location so refresh does not overwrite
+  useEffect(() => {
+    try {
+      const pinInfo = localStorage.getItem('ar_user_pincode_info');
+      if (pinInfo) {
+        const parsed = JSON.parse(pinInfo);
+        if (parsed.pincode || parsed.city) {
+          setDeliveryPincode(parsed.pincode || '');
+          setDetectedLocationName(parsed.city || ('Pin ' + parsed.pincode));
+          return;
+        }
+      }
+    } catch {}
+
+    if (user?.pincode) {
+      setDeliveryPincode(user.pincode);
+      setDetectedLocationName(user.city || 'Your Account');
+      return;
+    }
+
+    try {
+      const saved = localStorage.getItem('ar_user_address');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.pincode) {
+          setDeliveryPincode(parsed.pincode);
+          setDetectedLocationName(parsed.city || 'Saved Address');
+        }
+      }
+    } catch {}
+  }, [user]);
+
+  // Listen for live location updates from Header navigation or Pincode modal
+  useEffect(() => {
+    const handleLocationChange = (e: Event) => {
+      const customEvent = e as CustomEvent<{ pincode?: string; city?: string }>;
+      if (customEvent.detail?.pincode) {
+        setDeliveryPincode(customEvent.detail.pincode);
+      }
+      if (customEvent.detail?.city) {
+        setDetectedLocationName(customEvent.detail.city);
+      }
+    };
+    window.addEventListener('ar_location_changed', handleLocationChange);
+    return () => window.removeEventListener('ar_location_changed', handleLocationChange);
+  }, []);
+
+  const handleDetectLiveLocation = () => {
+    if (!navigator.geolocation) {
+      toast.warning('Geolocation is not supported by your browser.');
+      return;
+    }
+    setIsDetectingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const res = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + pos.coords.latitude + '&lon=' + pos.coords.longitude);
+          const data = await res.json();
+          const pin = data?.address?.postcode;
+          const city = data?.address?.city || data?.address?.state_district || data?.address?.state || '';
+          if (pin) {
+            const cleanPin = String(pin).replace(/\D/g, '').slice(0, 6);
+            setDeliveryPincode(cleanPin);
+            setDetectedLocationName(city || 'Live Location');
+            toast.success('Location detected: ' + (city || cleanPin));
+          } else {
+            toast.info('Could not pinpoint pincode. Please enter your 6-digit pincode.');
+          }
+        } catch {
+          toast.info('Could not resolve location. Please enter pincode manually.');
+        } finally {
+          setIsDetectingLocation(false);
+        }
+      },
+      () => {
+        setIsDetectingLocation(false);
+        toast.info('Location access denied. Please enter pincode manually.');
+      }
+    );
+  };
+
+  const effectivePrice = (product?.numericPrice || 0) * (quantity || 1);
+  const currentZoneResult = calculateZoneDelivery(
+    effectivePrice,
+    deliveryPincode,
+    zoneSettings && zoneSettings.length > 0 ? zoneSettings : DEFAULT_ZONE_SETTINGS
+  );
 
   // Reviews states
   const [reviews, setReviews] = useState<ProductReview[]>([]);
@@ -885,24 +978,33 @@ export default function ProductDetailPage() {
                 </button>
               </div>
 
-              <div className="mt-3 flex min-h-[54px] items-center gap-2.5 rounded-2xl bg-[#EAF8F1] px-3 py-2 text-[#07523F]">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#D8F2E4] shadow-sm">
-                  <Truck size={24} strokeWidth={2.2} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-black leading-tight min-[380px]:text-sm">
-                    {shippingSettings
-                      ? shippingSettings.freeShippingEnabled
-                        ? `Free Shipping on Orders Above ₹${shippingSettings.freeShippingThreshold.toLocaleString('en-IN')}/-`
-                        : `Standard Shipping ₹${shippingSettings.standardShippingCharge.toLocaleString('en-IN')}`
-                      : 'Shipping calculated at checkout'}
-                  </p>
-                  <p className="mt-0.5 flex items-center gap-1 text-[9px] font-medium leading-none text-gray-500 min-[380px]:text-[10px]">
-                    <CheckCircle2 size={11} className="fill-emerald-600 text-white" /> Fast &amp; Safe Delivery
-                  </p>
+              {/* Delivery info box - Hidden completely when Zone is OFF (Kill Switch) */}
+              {currentZoneResult.zone.isActive && (
+                <div className="mt-3 flex min-h-[54px] items-center gap-2.5 rounded-2xl bg-[#EAF8F1] px-3 py-2 text-[#07523F]">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#D8F2E4] shadow-sm">
+                    <Truck size={24} strokeWidth={2.2} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-black leading-tight min-[380px]:text-sm">
+                      {currentZoneResult.isFreeDelivery
+                        ? 'FREE Delivery'
+                        : 'Delivery Charges: ₹' + currentZoneResult.deliveryFee}
+                    </p>
+                    <p className="mt-0.5 flex items-center gap-1 text-[9px] font-medium leading-none text-gray-500 min-[380px]:text-[10px]">
+                      <CheckCircle2 size={11} className="fill-emerald-600 text-white shrink-0" />
+                      <span>
+                        {currentZoneResult.zone.zoneName}
+                        {currentZoneResult.isFreeDelivery
+                          ? ' • Free delivery applied'
+                          : currentZoneResult.zone.freeDeliveryThreshold > 0
+                          ? ' • Free above ₹' + currentZoneResult.zone.freeDeliveryThreshold.toLocaleString('en-IN')
+                          : ''}
+                      </span>
+                    </p>
+                  </div>
+                  <ChevronRight size={18} className="shrink-0" />
                 </div>
-                <ChevronRight size={18} className="shrink-0" />
-              </div>
+              )}
 
               <div className="mt-2.5 grid min-h-[58px] grid-cols-3 items-center divide-x divide-gray-200">
                 <div className="grid min-w-0 grid-cols-[32px_minmax(0,1fr)] items-center gap-1 pr-1.5 text-left min-[380px]:grid-cols-[40px_minmax(0,1fr)] min-[380px]:gap-2 min-[380px]:pr-2">
@@ -1111,22 +1213,30 @@ export default function ProductDetailPage() {
               </button>
             </div>
 
-            <div className="hidden items-center gap-3 rounded-2xl border border-emerald-100 bg-gradient-to-r from-[#EAF9F1] to-[#F4FBF7] px-4 py-3 text-[#07523F] sm:flex">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm">
-                <Truck size={22} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-black">
-                  {shippingSettings
-                    ? shippingSettings.freeShippingEnabled
-                      ? `Free Delivery Above ₹${shippingSettings.freeShippingThreshold.toLocaleString('en-IN')}`
-                      : `Standard Delivery ₹${shippingSettings.standardShippingCharge.toLocaleString('en-IN')}`
-                    : 'Delivery calculated at checkout'}
-                </p>
-                <p className="text-[10px] font-medium text-gray-500">Pan-India express</p>
+            {/* Delivery info box - Hidden completely when Zone is OFF (Kill Switch) */}
+            {currentZoneResult.zone.isActive && (
+              <div className="hidden items-center gap-3 rounded-2xl border border-emerald-100 bg-gradient-to-r from-[#EAF9F1] to-[#F4FBF7] px-4 py-3 text-[#07523F] sm:flex">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm">
+                  <Truck size={22} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-black">
+                    {currentZoneResult.isFreeDelivery
+                      ? 'FREE Delivery'
+                      : 'Delivery Charges: ₹' + currentZoneResult.deliveryFee}
+                  </p>
+                  <p className="text-[10px] font-medium text-gray-500">
+                    {currentZoneResult.zone.zoneName}
+                    {currentZoneResult.isFreeDelivery
+                      ? ' • Free delivery applied'
+                      : currentZoneResult.zone.freeDeliveryThreshold > 0
+                      ? ' • Free delivery on orders above ₹' + currentZoneResult.zone.freeDeliveryThreshold.toLocaleString('en-IN')
+                      : ' • Standard delivery fee applies'}
+                  </p>
+                </div>
+                <ChevronRight size={18} />
               </div>
-              <ChevronRight size={18} />
-            </div>
+            )}
 
             {/* Trust Points */}
             <div className="hidden grid-cols-3 divide-x divide-gray-200 rounded-2xl border border-gray-100 bg-white px-0.5 py-3 text-center sm:grid sm:px-1">

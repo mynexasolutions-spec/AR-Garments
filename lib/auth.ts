@@ -6,6 +6,9 @@ export interface AuthUser {
   email: string;
   phone?: string;
   userType?: 'customer' | 'business';
+  pincode?: string;
+  city?: string;
+  state?: string;
   createdAt?: string;
 }
 

@@ -23,6 +23,8 @@ import Footer from '@/components/Footer';
 import { useCart } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
+import { calculateZoneDelivery, DEFAULT_ZONE_SETTINGS, DetectedZoneResult } from '@/lib/zoneShipping';
+import { useShippingSettings } from '@/context/ShippingSettingsContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -257,7 +259,9 @@ function OrderSummary({
   shipping,
   shippingReady,
   total,
+  zoneResult,
 }: {
+  zoneResult?: DetectedZoneResult;
   items: { id: string; name: string; image?: string; quantity: number; price: number }[];
   subtotal: number;
   discount: number;
@@ -318,7 +322,7 @@ function OrderSummary({
           </div>
         )}
         <div className="flex justify-between text-sm text-[#083028]/70">
-          <span>Delivery charge</span>
+          <div><span>Delivery charge</span>{zoneResult && <p className="text-[10px] text-amber-800 font-semibold">{zoneResult.zoneLabel}</p>}</div>
           <span className={shippingReady && shipping === 0 ? 'text-green-600 font-medium' : ''}>
             {!shippingReady ? 'Calculating…' : shipping === 0 ? 'FREE' : `₹${shipping}`}
           </span>
@@ -345,9 +349,11 @@ function OrderConfirmation({
   discount,
   shipping,
   total,
+  zoneResult,
   onContinueShopping,
   onViewOrders,
 }: {
+  zoneResult?: DetectedZoneResult;
   orderId: string;
   subtotal: number;
   discount: number;
@@ -390,7 +396,7 @@ function OrderConfirmation({
             </div>
           )}
           <div className="flex justify-between text-[#083028]/65">
-            <span>Delivery charge</span>
+            <div><span>Delivery charge</span>{zoneResult && <p className="text-[10px] text-amber-800 font-semibold">{zoneResult.zoneLabel}</p>}</div>
             <span className={shipping === 0 ? 'font-bold text-emerald-700' : ''}>
               {shipping === 0 ? 'FREE' : `₹${shipping.toLocaleString('en-IN')}`}
             </span>
@@ -445,6 +451,7 @@ export default function CheckoutPage() {
     shippingSettingsLoading,
     shippingSettingsError,
   } = useCart();
+  const { zoneSettings } = useShippingSettings();
   const { user, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
@@ -457,6 +464,12 @@ export default function CheckoutPage() {
     state: '',
     pincode: '',
   });
+
+  const checkoutZoneResult = calculateZoneDelivery(
+    subtotal,
+    form.pincode,
+    zoneSettings && zoneSettings.length > 0 ? zoneSettings : DEFAULT_ZONE_SETTINGS
+  );
 
   const [paymentMethod, setPaymentMethod] = useState<'cod' | 'online'>('cod');
   const [errors, setErrors] = useState<Partial<DeliveryForm>>({});
@@ -973,16 +986,17 @@ export default function CheckoutPage() {
                 shipping={shipping}
                 shippingReady={Boolean(shippingSettings)}
                 total={total}
+                zoneResult={checkoutZoneResult}
               />
 
-              {/* Free shipping notice */}
-              {shipping > 0 && shippingSettings?.freeShippingEnabled && (
+              {/* Free shipping notice - Completely Hidden / Destroyed when Zone is OFF */}
+              {shipping > 0 && checkoutZoneResult.zone.isActive && checkoutZoneResult.amountNeededForFreeDelivery > 0 && (
                 <div className="mt-3 bg-[#B8860B]/10 border border-[#B8860B]/30 rounded-xl px-4 py-3 text-xs text-[#083028]/70 flex items-start gap-2">
                   <Truck size={15} className="text-[#B8860B] mt-0.5 shrink-0" />
                   <span>
                     Add{' '}
                     <strong className="text-[#083028]">
-                      ₹{Math.max(0, shippingSettings.freeShippingThreshold - subtotal).toLocaleString('en-IN')}
+                      ₹{checkoutZoneResult.amountNeededForFreeDelivery.toLocaleString('en-IN')}
                     </strong>{' '}
                     more to get <strong className="text-[#083028]">FREE shipping!</strong>
                   </span>

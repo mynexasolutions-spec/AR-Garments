@@ -1,292 +1,348 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
-  AlertCircle,
-  CheckCircle2,
-  IndianRupee,
   Loader2,
-  Save,
-  Settings2,
+  Check,
+  RotateCcw,
+  AlertCircle,
   Truck,
+  MapPin,
+  Sparkles,
+  Info
 } from 'lucide-react';
 import { useShippingSettings } from '@/context/ShippingSettingsContext';
 import { useToast } from '@/context/ToastContext';
-import { ShippingSettings } from '@/lib/shipping';
-
-interface ShippingSettingsForm {
-  freeShippingEnabled: boolean;
-  freeShippingThreshold: string;
-  standardShippingCharge: string;
-}
+import {
+  DEFAULT_ZONE_SETTINGS,
+  ZoneShippingSetting,
+} from '@/lib/zoneShipping';
 
 export default function ShippingSettingsPage() {
-  const { settings, loading, error, refreshSettings } = useShippingSettings();
+  const { zoneSettings, loading, error, refreshSettings } = useShippingSettings();
   const { toast } = useToast();
-  const [form, setForm] = useState<ShippingSettingsForm | null>(null);
+
+  const [zones, setZones] = useState<ZoneShippingSetting[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!settings) {
-      return;
+    if (zoneSettings && zoneSettings.length > 0) {
+      setZones(zoneSettings);
     }
+  }, [zoneSettings]);
 
-    setForm({
-      freeShippingEnabled: settings.freeShippingEnabled,
-      freeShippingThreshold: String(settings.freeShippingThreshold),
-      standardShippingCharge: String(settings.standardShippingCharge),
+  const updateZoneField = (
+    index: number,
+    field: keyof ZoneShippingSetting,
+    value: unknown
+  ) => {
+    setZones((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], [field]: value };
+      return copy;
     });
-  }, [settings]);
+  };
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
-    event.preventDefault();
-    if (!form) {
-      return;
-    }
-
-    const freeShippingThreshold = Number(form.freeShippingThreshold);
-    const standardShippingCharge = Number(form.standardShippingCharge);
-    if (!Number.isFinite(freeShippingThreshold) || freeShippingThreshold < 0) {
-      setSaveError('Enter a valid non-negative free-shipping threshold.');
-      return;
-    }
-    if (!Number.isFinite(standardShippingCharge) || standardShippingCharge < 0) {
-      setSaveError('Enter a valid non-negative standard shipping charge.');
-      return;
-    }
-
+  const handleSave = async () => {
     setSaving(true);
     setSaveError(null);
+
     try {
-      const response = await fetch('/api/shipping-settings', {
+      const res = await fetch('/api/shipping-settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          freeShippingEnabled: form.freeShippingEnabled,
-          freeShippingThreshold,
-          standardShippingCharge,
-        }),
+        body: JSON.stringify(zones),
       });
-      const result = (await response.json()) as ShippingSettings & { error?: string };
-      if (!response.ok) {
-        throw new Error(result.error || 'Unable to save shipping settings.');
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to save zone settings');
       }
 
-      setForm({
-        freeShippingEnabled: result.freeShippingEnabled,
-        freeShippingThreshold: String(result.freeShippingThreshold),
-        standardShippingCharge: String(result.standardShippingCharge),
-      });
       await refreshSettings();
-      toast.success('Shipping settings updated successfully.', { title: 'Settings Saved' });
-    } catch (submitError: unknown) {
-      const message =
-        submitError instanceof Error ? submitError.message : 'Unable to save shipping settings.';
-      setSaveError(message);
-      toast.error(message, { title: 'Save Failed' });
+      toast.success('Zone delivery settings saved successfully!', {
+        title: 'Settings Saved / सुरक्षित किया गया',
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error saving zone settings';
+      setSaveError(msg);
+      toast.error(msg, { title: 'Save Failed' });
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading && !form) {
-    return (
-      <div className="flex min-h-[420px] items-center justify-center">
-        <div className="flex items-center gap-3 text-sm font-semibold text-gray-500">
-          <Loader2 className="animate-spin text-[#083028]" size={20} />
-          Loading shipping settings...
-        </div>
-      </div>
-    );
-  }
-
-  if ((error || !form) && !loading) {
-    return (
-      <div className="mx-auto max-w-3xl rounded-2xl border border-red-200 bg-red-50 p-6">
-        <div className="flex items-start gap-3">
-          <AlertCircle className="mt-0.5 shrink-0 text-red-600" size={22} />
-          <div>
-            <h1 className="font-bold text-red-900">Shipping settings are unavailable</h1>
-            <p className="mt-1 text-sm text-red-700">{error || 'No shipping settings were found.'}</p>
-            <button
-              type="button"
-              onClick={() => void refreshSettings()}
-              className="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-800"
-            >
-              Try Again
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!form) {
-    return null;
-  }
+  const handleResetToDefaults = () => {
+    if (confirm('Reset all 3 zones to default values?')) {
+      setZones(DEFAULT_ZONE_SETTINGS);
+      toast.info('Default values loaded. Click "Save Settings" to persist.');
+    }
+  };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div className="max-w-5xl mx-auto space-y-8 pb-16">
+      {/* Page Header */}
+      <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-[#B8860B]">
-            <Settings2 size={15} /> Store Configuration
+          <div className="flex items-center gap-2.5 text-xs font-bold uppercase tracking-wider text-[#083028] mb-1">
+            <Truck size={18} className="text-[#B8860B]" />
+            <span>Zone-Wise Free Delivery Setup</span>
           </div>
-          <h1 className="text-2xl font-black text-gray-900 sm:text-3xl">Shipping Settings</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Control the fixed delivery charge and automatic free-delivery eligibility across the store.
+          <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">
+            ज़ोन-वाइज़ फ्री डिलीवरी सेटिंग्स
+          </h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-1">
+            तीनों ज़ोन का अलग-अलग क्राइटेरिया (Threshold), डिलीवरी चार्ज और चालू/बंद (ON/OFF) बटन
           </p>
         </div>
-        {settings?.updatedAt && (
-          <p className="text-xs text-gray-400">
-            Last updated {new Date(settings.updatedAt).toLocaleString('en-IN')}
-          </p>
-        )}
+
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleResetToDefaults}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 border border-gray-200 text-gray-600 hover:bg-gray-50 rounded-2xl text-xs font-bold transition"
+          >
+            <RotateCcw size={14} /> Defaults
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={handleSave}
+            className="inline-flex items-center gap-2 px-6 py-2.5 bg-[#083028] hover:bg-[#051e19] text-white rounded-2xl text-xs sm:text-sm font-bold transition shadow-md disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+            <span>Save Settings / सुरक्षित करें</span>
+          </button>
+        </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-        <div className="border-b border-gray-100 bg-[#083028] px-5 py-5 text-white sm:px-7">
-          <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10">
-              <Truck size={23} />
-            </span>
-            <div>
-              <h2 className="font-bold">Storewide shipping rules</h2>
-              <p className="mt-0.5 text-xs text-white/65">
-                These values are used by product pages, cart, checkout, and payment verification.
-              </p>
-            </div>
-          </div>
+      {saveError && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 font-medium flex items-center gap-2">
+          <AlertCircle size={16} className="shrink-0" />
+          <span>{saveError}</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 font-medium flex items-center gap-2">
+          <AlertCircle size={16} className="shrink-0" />
+          <span>Note: {error} (Running with default zone settings until database table is synced)</span>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          SECTION: FREE DELIVERY CONFIGURATION (PIXEL-PERFECT MATCH TO SCREENSHOT)
+      ══════════════════════════════════════════════════════════════════ */}
+      <div className="bg-white rounded-3xl border-2 border-gray-200 p-5 sm:p-8 shadow-sm space-y-6">
+        
+        {/* Title matching Screenshot */}
+        <div className="text-center pb-2">
+          <h2 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight">
+            Free Delivery Configuration / फ्री डिलीवरी सेटिंग
+          </h2>
+          <p className="text-xs text-gray-500 mt-1">
+            Configure individual criteria, delivery fees, and activate/deactivate free shipping per zone.
+          </p>
         </div>
 
-        <div className="space-y-6 p-5 sm:p-7">
-          <div className="flex flex-col gap-4 rounded-2xl border border-gray-200 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-            <div>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 size={18} className="text-emerald-600" />
-                <h3 className="font-bold text-gray-900">Automatic free shipping</h3>
-              </div>
-              <p className="mt-1 pl-6 text-xs leading-relaxed text-gray-500">
-                When enabled, qualifying orders automatically receive free shipping without a coupon.
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-3 self-end sm:self-auto">
-              <span
-                className={`text-xs font-bold ${
-                  form.freeShippingEnabled ? 'text-emerald-700' : 'text-gray-500'
-                }`}
+        {/* 3 Zone Cards Grid */}
+        {loading && zones.length === 0 ? (
+          <div className="flex items-center justify-center py-16 gap-3 text-gray-400">
+            <Loader2 size={24} className="animate-spin text-[#E67E22]" />
+            <span className="text-sm font-semibold">Loading zone settings from database...</span>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {zones.map((zone, index) => {
+            return (
+              <div
+                key={zone.id || index}
+                className="bg-white rounded-2xl border-2 border-gray-200 overflow-hidden shadow-xs hover:border-[#083028]/40 transition-all flex flex-col"
               >
-                {form.freeShippingEnabled ? 'Enabled' : 'Disabled'}
-              </span>
-              <button
-                type="button"
-                role="switch"
-                aria-label="Automatic free shipping"
-                aria-checked={form.freeShippingEnabled}
-                onClick={() =>
-                  setForm((current) =>
-                    current
-                      ? { ...current, freeShippingEnabled: !current.freeShippingEnabled }
-                      : current
-                  )
-                }
-                className={`relative inline-flex h-7 w-12 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#083028] focus-visible:ring-offset-2 ${
-                  form.freeShippingEnabled ? 'bg-emerald-600' : 'bg-gray-300'
-                }`}
-              >
-                <span
-                  aria-hidden="true"
-                  className={`pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200 ${
-                    form.freeShippingEnabled ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
-              </button>
-            </div>
-          </div>
+                {/* Header Banner - Orange matched from screenshot */}
+                <div className="bg-[#E67E22] px-4 py-3.5 text-center text-white border-b border-[#D35400]">
+                  <h3 className="font-extrabold text-sm sm:text-base leading-tight">
+                    {zone.zoneName}
+                  </h3>
+                  <p className="text-xs font-semibold opacity-95 mt-0.5">
+                    ({zone.zoneNameHi})
+                  </p>
+                </div>
 
-          <div className="grid gap-5 md:grid-cols-2">
-            <label className="block">
-              <span className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-700">
-                <IndianRupee size={15} className="text-[#083028]" /> Free-shipping threshold
-              </span>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-4 font-bold text-gray-400">₹</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  required
-                  disabled={!form.freeShippingEnabled}
-                  value={form.freeShippingThreshold}
-                  onChange={(event) =>
-                    setForm({ ...form, freeShippingThreshold: event.target.value })
-                  }
-                  className="w-full rounded-xl border border-gray-300 py-3 pl-9 pr-4 font-semibold text-gray-900 outline-none transition focus:border-[#083028] focus:ring-2 focus:ring-[#083028]/10 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
-                />
+                {/* Card Body */}
+                <div className="p-5 space-y-5 flex-1 flex flex-col justify-between">
+                  {/* ZONE STATUS Toggle */}
+                  <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                    <span className="text-xs font-black text-gray-800 tracking-wide uppercase">
+                      ZONE STATUS
+                    </span>
+
+                    {/* Toggle Pill Button */}
+                    <button
+                      type="button"
+                      onClick={() => updateZoneField(index, 'isActive', !zone.isActive)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all shadow-xs ${
+                        zone.isActive
+                          ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          : 'bg-red-600 text-white hover:bg-red-700'
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                      <span>{zone.isActive ? 'ON (चालू)' : 'OFF (बंद)'}</span>
+                    </button>
+                  </div>
+
+                  {/* Inputs */}
+                  <div className="space-y-4">
+                    {/* Free Delivery Threshold */}
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-700 leading-tight mb-1.5">
+                        Free Delivery Threshold<br />
+                        <span className="text-[10px] text-gray-500 font-normal">
+                          (न्यूनतम आर्डर मूल्य):
+                        </span>
+                      </label>
+                      <div className="relative flex items-center">
+                        <span className="absolute left-3 text-sm font-bold text-gray-500">
+                          ₹
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="10"
+                          value={zone.freeDeliveryThreshold}
+                          onChange={(e) =>
+                            updateZoneField(
+                              index,
+                              'freeDeliveryThreshold',
+                              parseFloat(e.target.value) || 0
+                            )
+                          }
+                          className="w-full pl-8 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#083028]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Standard Delivery Fee */}
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-700 leading-tight mb-1.5">
+                        Standard Delivery Fee<br />
+                        <span className="text-[10px] text-gray-500 font-normal">
+                          (कम आर्डर पर चार्ज):
+                        </span>
+                      </label>
+                      <div className="relative flex items-center">
+                        <span className="absolute left-3 text-sm font-bold text-gray-500">
+                          ₹
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="5"
+                          value={zone.standardDeliveryFee}
+                          onChange={(e) =>
+                            updateZoneField(
+                              index,
+                              'standardDeliveryFee',
+                              parseFloat(e.target.value) || 0
+                            )
+                          }
+                          className="w-full pl-8 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#083028]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Status Indicator Note */}
+                  <div className={`p-2.5 rounded-xl text-[10px] leading-relaxed ${
+                    zone.isActive ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'
+                  }`}>
+                    {zone.isActive ? (
+                      <p>
+                        ✓ <strong>Free Delivery active</strong> on orders above ₹{zone.freeDeliveryThreshold}. Below this, ₹{zone.standardDeliveryFee} standard fee applies.
+                      </p>
+                    ) : (
+                      <p>
+                        ✕ <strong>Free Delivery OFF</strong>: ₹{zone.standardDeliveryFee} will always apply regardless of cart value.
+                      </p>
+                    )}
+                  </div>
+                </div>
               </div>
-              <span className="mt-2 block text-xs text-gray-500">
-                Orders at or above this subtotal qualify automatically.
-              </span>
-            </label>
+            );
+          })}
+        </div>
+        )}
 
-            <label className="block">
-              <span className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-700">
-                <Truck size={15} className="text-[#083028]" /> Fixed delivery charge
-              </span>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-4 font-bold text-gray-400">₹</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  required
-                  value={form.standardShippingCharge}
-                  onChange={(event) =>
-                    setForm({ ...form, standardShippingCharge: event.target.value })
-                  }
-                  className="w-full rounded-xl border border-gray-300 py-3 pl-9 pr-4 font-semibold text-gray-900 outline-none transition focus:border-[#083028] focus:ring-2 focus:ring-[#083028]/10"
-                />
-              </div>
-              <span className="mt-2 block text-xs text-gray-500">
-                Applied once to orders below the configured free-delivery threshold.
-              </span>
-            </label>
-          </div>
+        {/* Hint text matching Screenshot 1 & 2 */}
+        {/* <div className="bg-amber-50/60 border border-amber-200/80 rounded-2xl p-4 text-center space-y-1">
+          <p className="text-xs sm:text-sm font-bold text-gray-900">
+            सभी ज़ोन के लिए ON/OFF, फ्री डिलीवरी लिमिट (Threshold) और डिलीवरी चार्ज सेट करें।
+          </p>
+          <p className="text-xs text-red-700 font-semibold">
+            If OFF, standard delivery fee will always apply regardless of order value.<br />
+            (अगर बंद (OFF) करेंगे, तो आर्डर मूल्य चाहे जो हो, सामान्य चार्ज लगेगा।)
+          </p>
+        </div> */}
 
-          <div className="rounded-xl border border-[#B8860B]/25 bg-[#B8860B]/5 px-4 py-3 text-sm text-gray-700">
-            {form.freeShippingEnabled ? (
-              <p>
-                Customers pay <strong>₹{Number(form.standardShippingCharge || 0).toLocaleString('en-IN')}</strong>{' '}
-                below <strong>₹{Number(form.freeShippingThreshold || 0).toLocaleString('en-IN')}</strong>, then shipping becomes free.
-              </p>
-            ) : (
-              <p>
-                Automatic free shipping is disabled. Customers pay{' '}
-                <strong>₹{Number(form.standardShippingCharge || 0).toLocaleString('en-IN')}</strong>, unless a valid free-shipping coupon is applied.
-              </p>
-            )}
-          </div>
+        {/* Save Button Centered (Green Button matching screenshot) */}
+        {/* <div className="text-center pt-2">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={handleSave}
+            className="inline-flex items-center justify-center gap-2 px-10 py-3.5 bg-[#2E7D32] hover:bg-[#1B5E20] text-white rounded-2xl text-sm font-black transition-all shadow-lg hover:shadow-xl active:scale-[0.98] disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+            <span>Save Settings / सुरक्षित करें</span>
+          </button>
+        </div> */}
+      </div>
 
-          {saveError && (
-            <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              <AlertCircle size={17} className="mt-0.5 shrink-0" />
-              {saveError}
+      {/* ══════════════════════════════════════════════════════════════════
+          HOW IT WORKS EXPLANATION / SAMPLE CHECKOUT PREVIEW
+      ══════════════════════════════════════════════════════════════════ */}
+      <div className="bg-[#FAF8F5] rounded-3xl border border-gray-200 p-6 sm:p-8 space-y-4">
+        <div className="flex items-center gap-2">
+          <Sparkles size={18} className="text-[#B8860B]" />
+          <h3 className="text-sm font-black text-gray-900 uppercase tracking-wide">
+            Checkout Pincode Detection Rules
+          </h3>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-gray-600">
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 space-y-1.5">
+            <div className="flex items-center gap-1.5 font-bold text-[#083028]">
+              <MapPin size={14} className="text-[#E67E22]" />
+              <span>Prayagraj Nagar Nigam</span>
             </div>
-          )}
+            <p className="text-gray-500">
+              Matches pincodes <strong>211001 – 211019</strong>. If order ≥ ₹{zones[0]?.freeDeliveryThreshold || 500}, delivery is FREE.
+            </p>
+          </div>
 
-          <div className="flex justify-end border-t border-gray-100 pt-5">
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex min-w-40 items-center justify-center gap-2 rounded-xl bg-[#083028] px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#051f1a] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {saving ? <Loader2 className="animate-spin" size={17} /> : <Save size={17} />}
-              {saving ? 'Saving...' : 'Save Settings'}
-            </button>
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 space-y-1.5">
+            <div className="flex items-center gap-1.5 font-bold text-[#083028]">
+              <MapPin size={14} className="text-[#E67E22]" />
+              <span>Prayagraj Dehat</span>
+            </div>
+            <p className="text-gray-500">
+              Matches rural pincodes starting with <strong>212xxx</strong> (e.g. 212111). If order ≥ ₹{zones[1]?.freeDeliveryThreshold || 1500}, delivery is FREE.
+            </p>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 space-y-1.5">
+            <div className="flex items-center gap-1.5 font-bold text-[#083028]">
+              <MapPin size={14} className="text-[#E67E22]" />
+              <span>Pan India</span>
+            </div>
+            <p className="text-gray-500">
+              All other pincodes across India. If order ≥ ₹{zones[2]?.freeDeliveryThreshold || 3000}, delivery is FREE.
+            </p>
           </div>
         </div>
-      </form>
+      </div>
     </div>
   );
 }
