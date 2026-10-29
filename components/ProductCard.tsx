@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ShoppingCart, Heart } from 'lucide-react';
+import { ShoppingCart, Heart, Info, Package, TrendingUp, TrendingDown } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useCart } from '@/context/CartContext';
@@ -9,6 +9,7 @@ import { useShippingSettings } from '@/context/ShippingSettingsContext';
 import { calculateZoneDelivery, DEFAULT_ZONE_SETTINGS } from '@/lib/zoneShipping';
 import { Truck } from 'lucide-react';
 import { useWishlist } from '@/context/WishlistContext';
+import { useZonePriceRules } from '@/context/ZonePriceRulesContext';
 
 export interface Product {
   id: number | string;
@@ -16,10 +17,15 @@ export interface Product {
   price: string;
   numericPrice?: number;
   category?: string;
+  categoryId?: string;
+  subcategoryId?: string;
+  subcategoryName?: string;
   image: string;
   images?: string[];
   description?: string;
   badge?: string;
+  deliveryType?: 'standard' | 'low_margin';
+  deliveryChargeAmount?: number;
 }
 
 interface ProductCardProps {
@@ -37,12 +43,14 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
 
   // Read saved location or default to determine if Free Delivery is active for this product
   let savedPin = '';
+  let savedCity = '';
   if (typeof window !== 'undefined') {
     try {
       const savedInfo = localStorage.getItem('ar_user_pincode_info');
       if (savedInfo) {
         const parsed = JSON.parse(savedInfo);
         savedPin = parsed.pincode || '';
+        savedCity = parsed.city || '';
       }
     } catch {}
   }
@@ -55,12 +63,41 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
   // Conditional UI: Badge only renders if Zone is ON and product qualifies
   const showFreeDeliveryBadge = zoneResult.zone.isActive && zoneResult.isFreeDelivery;
 
+  // Delivery type override logic
+  const isLowMargin = product.deliveryType === 'low_margin';
+  const chargeAmt = product.deliveryChargeAmount ?? 0;
+
+  // ── Zone Price Markup ──────────────────────────────────────────────────────
+  const { getZonePrice } = useZonePriceRules();
+  const zonePrice = getZonePrice(
+    numericPrice,
+    {
+      categoryId: product.categoryId,
+      categoryName: product.category,
+      category: product.category,
+      subcategoryId: product.subcategoryId,
+      subcategoryName: product.subcategoryName,
+    },
+    null,
+    { pincode: savedPin, city: savedCity }
+  );
+  const showZoneMarkup = zonePrice.hasRule && zonePrice.displayPrice !== numericPrice;
+
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setAdded(true);
-    addToCart(product, 1);
-    if (onAddToCart) onAddToCart(product);
+    const cartProduct = {
+      ...product,
+      price: showZoneMarkup ? `₹${zonePrice.displayPrice.toLocaleString('en-IN')}` : product.price,
+      numericPrice: showZoneMarkup ? zonePrice.displayPrice : numericPrice,
+      originalNumericPrice: numericPrice,
+      categoryId: product.categoryId,
+      subcategoryId: product.subcategoryId,
+      subcategoryName: product.subcategoryName,
+    };
+    addToCart(cartProduct, 1);
+    if (onAddToCart) onAddToCart(cartProduct);
     setTimeout(() => setAdded(false), 1500);
   };
 
@@ -126,16 +163,65 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
           <h3 className="font-bold text-gray-900 text-xs sm:text-sm md:text-base leading-snug mb-1 sm:mb-2 line-clamp-2 group-hover:text-[#083028] transition-colors">
             {product.name}
           </h3>
-          <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2">
-            <p className="text-xs sm:text-sm md:text-base font-bold text-[#083028]">
-              {product.price}
-            </p>
-            {showFreeDeliveryBadge && (
-              <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/60">
-                <Truck size={10} className="shrink-0" />
-                <span>Free Delivery</span>
-              </span>
-            )}
+          {/* Zone Price Row */}
+          <div className="mb-1 sm:mb-2">
+            <div className="flex items-start justify-between gap-1">
+              <div className="min-w-0">
+                {/* Show zone-computed price if a rule applies */}
+                {!isLowMargin && showZoneMarkup ? (
+                  <div className="flex items-baseline gap-1 flex-wrap">
+                    <p className="text-xs sm:text-sm md:text-base font-black text-[#083028]">
+                      ₹{zonePrice.displayPrice.toLocaleString('en-IN')}
+                    </p>
+                    <p className="text-[9px] sm:text-[10px] font-medium text-gray-400 line-through">
+                      {product.price}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs sm:text-sm md:text-base font-bold text-[#083028]">
+                    {product.price}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-col items-end gap-0.5 shrink-0">
+                {/* Zone markup / discount badge */}
+                {!isLowMargin && showZoneMarkup && (
+                  <span className={`inline-flex items-center gap-0.5 text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                    zonePrice.discountPercent > 0
+                      ? 'text-blue-700 bg-blue-50 border-blue-200/60'
+                      : zonePrice.markupDirection === 'increase'
+                      ? 'text-amber-700 bg-amber-50 border-amber-200/60'
+                      : 'text-red-700 bg-red-50 border-red-200/60'
+                  }`}>
+                    {zonePrice.discountPercent > 0 ? (
+                      <>{zonePrice.discountPercent}% OFF</>
+                    ) : zonePrice.markupDirection === 'increase' ? (
+                      <><TrendingUp size={9} className="shrink-0" />+{zonePrice.markupPercent}%</>
+                    ) : (
+                      <><TrendingDown size={9} className="shrink-0" />-{zonePrice.markupPercent}%</>
+                    )}
+                  </span>
+                )}
+                {/* Delivery badge: orange for low_margin, green for standard (zone-based) */}
+                {isLowMargin ? (
+                  <span className="relative group/tooltip inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-200/70 cursor-pointer">
+                    <Package size={10} className="shrink-0" />
+                    <span>+ {chargeAmt > 0 ? `₹${chargeAmt}` : ''} Delivery</span>
+                    <Info size={9} className="shrink-0 text-orange-500" />
+                    <span className="pointer-events-none absolute bottom-full right-0 mb-1.5 w-56 z-50 rounded-xl bg-gray-900 text-white text-[10px] leading-relaxed p-2.5 shadow-xl opacity-0 group-hover/tooltip:opacity-100 transition-opacity duration-200">
+                      <span className="font-bold block mb-0.5">Why No Free Delivery? / फ्री डिलीवरी क्यों नहीं?</span>
+                      Sold at razor-thin wholesale margins, this product does not count towards the Free Delivery threshold.
+                      <span className="block mt-0.5 text-gray-300">इस प्रोडक्ट की कीमत बहुत कम मार्जिन पर तय की गई है। इसलिए यह फ्री डिलीवरी छूट के अंतर्गत नहीं आता है।</span>
+                    </span>
+                  </span>
+                ) : showFreeDeliveryBadge ? (
+                  <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/60">
+                    <Truck size={10} className="shrink-0" />
+                    <span>Free Delivery</span>
+                  </span>
+                ) : null}
+              </div>
+            </div>
           </div>
         </div>
       </Link>

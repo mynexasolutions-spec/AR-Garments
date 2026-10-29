@@ -1,20 +1,30 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { Coupon } from '@/lib/adminData';
 import { useToast } from '@/context/ToastContext';
 import { useShippingSettings } from '@/context/ShippingSettingsContext';
+import { useZonePriceRules } from '@/context/ZonePriceRulesContext';
 import { calculateShippingCharge, ShippingSettings } from '@/lib/shipping';
-import { ZoneShippingSetting } from '@/lib/zoneShipping';
+import { ZonePriceResult } from '@/lib/zonePriceMarkup';
 
 export interface CartItem {
   id: string;
   name: string;
   price: string;
   numericPrice: number;
+  originalNumericPrice?: number;
   image: string;
   category?: string;
+  categoryId?: string;
+  subcategoryId?: string | null;
+  subcategoryName?: string | null;
   quantity: number;
+  deliveryType?: 'standard' | 'low_margin';
+  deliveryChargeAmount?: number;
+  // Computed zone price info
+  zonePrice?: ZonePriceResult;
+  effectivePrice?: number;
 }
 
 interface CartContextType {
@@ -24,8 +34,14 @@ interface CartContextType {
     name: string;
     price: string;
     numericPrice?: number;
+    originalNumericPrice?: number;
     image: string;
     category?: string;
+    categoryId?: string;
+    subcategoryId?: string | null;
+    subcategoryName?: string | null;
+    deliveryType?: 'standard' | 'low_margin';
+    deliveryChargeAmount?: number;
   }, quantity?: number) => void;
   removeFromCart: (productId: string | number) => void;
   updateQuantity: (productId: string | number, quantity: number) => void;
@@ -42,6 +58,7 @@ interface CartContextType {
   shippingSettings: ShippingSettings | null;
   shippingSettingsLoading: boolean;
   shippingSettingsError: string | null;
+  getItemZonePrice: (item: CartItem, locationOverride?: { pincode?: string; city?: string }) => ZonePriceResult;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
@@ -62,7 +79,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     loading: shippingSettingsLoading,
     error: shippingSettingsError,
   } = useShippingSettings();
-  const [items, setItems] = useState<CartItem[]>([]);
+  const { getZonePrice } = useZonePriceRules();
+
+  const [rawItems, setRawItems] = useState<CartItem[]>([]);
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -72,7 +91,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     try {
       const stored = localStorage.getItem('ar_cart');
       if (stored) {
-        setItems(JSON.parse(stored));
+        setRawItems(JSON.parse(stored));
       }
       const storedCoupon = localStorage.getItem('ar_applied_coupon');
       if (storedCoupon) {
@@ -89,11 +108,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isLoaded) return;
     try {
-      localStorage.setItem('ar_cart', JSON.stringify(items));
+      localStorage.setItem('ar_cart', JSON.stringify(rawItems));
     } catch (e) {
       console.error('Failed to save cart to storage:', e);
     }
-  }, [items, isLoaded]);
+  }, [rawItems, isLoaded]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -113,21 +132,60 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => setToastMessage(null), 2500);
   };
 
+  const getItemZonePrice = (
+    item: CartItem,
+    locationOverride?: { pincode?: string; city?: string }
+  ): ZonePriceResult => {
+    const base = item.originalNumericPrice || item.numericPrice;
+    return getZonePrice(
+      base,
+      {
+        categoryId: item.categoryId,
+        categoryName: item.category,
+        category: item.category,
+        subcategoryId: item.subcategoryId,
+        subcategoryName: item.subcategoryName,
+      },
+      item.subcategoryId,
+      locationOverride
+    );
+  };
+
+  // Dynamically enhance items with current zone price
+  const items = useMemo(() => {
+    return rawItems.map((item) => {
+      const zPrice = getItemZonePrice(item);
+      const effectivePrice = zPrice.hasRule ? zPrice.displayPrice : item.numericPrice;
+      return {
+        ...item,
+        zonePrice: zPrice,
+        effectivePrice,
+      };
+    });
+  }, [rawItems, getZonePrice]);
+
   const addToCart = (
     product: {
       id: string | number;
       name: string;
       price: string;
       numericPrice?: number;
+      originalNumericPrice?: number;
       image: string;
       category?: string;
+      categoryId?: string;
+      subcategoryId?: string | null;
+      subcategoryName?: string | null;
+      deliveryType?: 'standard' | 'low_margin';
+      deliveryChargeAmount?: number;
     },
     quantity = 1
   ) => {
     const pId = String(product.id);
     const numPrice = product.numericPrice || parsePrice(product.price);
+    const origPrice = product.originalNumericPrice || numPrice;
 
-    setItems((prev) => {
+    setRawItems((prev) => {
       const existingIndex = prev.findIndex((item) => item.id === pId);
       if (existingIndex > -1) {
         const updated = [...prev];
@@ -141,9 +199,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             name: product.name,
             price: product.price,
             numericPrice: numPrice,
+            originalNumericPrice: origPrice,
             image: product.image,
             category: product.category || 'Ethnic Wear',
+            categoryId: product.categoryId,
+            subcategoryId: product.subcategoryId || null,
+            subcategoryName: product.subcategoryName || null,
             quantity,
+            deliveryType: product.deliveryType || 'standard',
+            deliveryChargeAmount: product.deliveryChargeAmount ?? 0,
           },
         ];
       }
@@ -155,8 +219,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const removeFromCart = (productId: string | number) => {
     const pId = String(productId);
-    const item = items.find((i) => i.id === pId);
-    setItems((prev) => prev.filter((item) => item.id !== pId));
+    const item = rawItems.find((i) => i.id === pId);
+    setRawItems((prev) => prev.filter((item) => item.id !== pId));
     showToast('Item removed from bag');
     toast.info(item ? `"${item.name}" removed from bag` : 'Item removed from bag', { title: 'Shopping Bag' });
   };
@@ -167,13 +231,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       removeFromCart(productId);
       return;
     }
-    setItems((prev) =>
+    setRawItems((prev) =>
       prev.map((item) => (item.id === pId ? { ...item, quantity } : item))
     );
   };
 
   const clearCart = () => {
-    setItems([]);
+    setRawItems([]);
     setAppliedCoupon(null);
     localStorage.removeItem('ar_cart');
     localStorage.removeItem('ar_applied_coupon');
@@ -192,9 +256,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     toast.info('Coupon has been removed', { title: 'Discount' });
   };
 
-  // Calculations
+  // Calculations using dynamic effective zone prices
   const totalCount = items.reduce((sum, item) => sum + item.quantity, 0);
-  const subtotal = items.reduce((sum, item) => sum + item.numericPrice * item.quantity, 0);
+  const subtotal = items.reduce((sum, item) => {
+    const unitPrice = item.effectivePrice ?? item.numericPrice;
+    return sum + unitPrice * item.quantity;
+  }, 0);
 
   // Coupon-based free shipping overrides the storewide shipping rule.
   const hasFreeShippingCoupon = appliedCoupon?.discountType === 'free_shipping';
@@ -237,6 +304,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         shippingSettings,
         shippingSettingsLoading,
         shippingSettingsError,
+        getItemZonePrice,
       }}
     >
       {children}

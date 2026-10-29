@@ -65,6 +65,9 @@ export interface Product {
   youtubeUrl?: string;
   facebookUrl?: string;
   instagramUrl?: string;
+  // Delivery Type (per-product override)
+  deliveryType?: 'standard' | 'low_margin'; // 'standard' = green Free Delivery tag; 'low_margin' = orange + Delivery tag
+  deliveryChargeAmount?: number;             // Fixed delivery charge in ₹ for low_margin products
 }
 
 export interface Testimonial {
@@ -284,6 +287,8 @@ export const supabaseData = {
         isNewArrival: d.is_new_arrival,
         isBestSeller: d.is_best_seller,
         order: d.sort_order,
+        deliveryType: d.delivery_type ?? 'standard',
+        deliveryChargeAmount: d.delivery_charge_amount ?? 0,
       }));
     } catch {
       return null;

@@ -116,6 +116,9 @@ type ProductFormData = {
   isPremium: boolean;
   isGold: boolean;
   active: boolean;
+  // Delivery Type (per-product override)
+  deliveryType: 'standard' | 'low_margin';
+  deliveryChargeAmount: number;
 };
 
 const initialFormData = (): ProductFormData => ({
@@ -156,6 +159,8 @@ const initialFormData = (): ProductFormData => ({
   isPremium: false,
   isGold: false,
   active: true,
+  deliveryType: 'standard',
+  deliveryChargeAmount: 0,
 });
 
 const defaultVariant = (parentForm: ProductFormData): VariantRecord => ({
@@ -264,6 +269,8 @@ export default function AdminProductsPage() {
         youtubeUrl: String(d.youtube_url || ''),
         facebookUrl: String(d.facebook_url || ''),
         instagramUrl: String(d.instagram_url || ''),
+        deliveryType: (d.delivery_type === 'low_margin' ? 'low_margin' : 'standard') as 'standard' | 'low_margin',
+        deliveryChargeAmount: Number(d.delivery_charge_amount) || 0,
       }));
       setProducts(mapped);
     } catch (err) {
@@ -392,6 +399,8 @@ export default function AdminProductsPage() {
       isPremium: Boolean(p.isPremium),
       isGold: Boolean(p.isGold),
       active: p.active !== false,
+      deliveryType: (p.deliveryType === 'low_margin' ? 'low_margin' : 'standard') as 'standard' | 'low_margin',
+      deliveryChargeAmount: p.deliveryChargeAmount ?? 0,
     });
     setUploadError('');
     setSaveError('');
@@ -666,6 +675,8 @@ export default function AdminProductsPage() {
         youtubeUrl: formData.youtubeUrl,
         facebookUrl: formData.facebookUrl,
         instagramUrl: formData.instagramUrl,
+        deliveryType: formData.deliveryType,
+        deliveryChargeAmount: formData.deliveryChargeAmount,
       };
 
       const url = editingProduct ? `/api/products?id=${editingProduct.id}` : '/api/products';
@@ -2046,7 +2057,84 @@ export default function AdminProductsPage() {
           </div>
         </div>
 
-        {/* ════ SECTION 7: SHOW ON HOMEPAGE SECTIONS (Screenshot 2) ════ */}
+        {/* ════ SECTION 7: DELIVERY TYPE ════ */}
+        <div className="bg-white rounded-2xl border border-gray-200/80 p-5 sm:p-6 shadow-xs space-y-4">
+          <div className="flex items-center gap-2.5 pb-2 border-b border-gray-100">
+            <Truck size={18} className="text-[#083028]" />
+            <h2 className="text-xs font-extrabold text-gray-900 uppercase tracking-wide">
+              Delivery Type
+            </h2>
+          </div>
+
+          <div className="space-y-3">
+            {/* Dropdown */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+                Select Delivery Type
+              </label>
+              <div className="relative">
+                <select
+                  value={formData.deliveryType}
+                  onChange={(e) => setFormData({ ...formData, deliveryType: e.target.value as 'standard' | 'low_margin', deliveryChargeAmount: e.target.value === 'standard' ? 0 : formData.deliveryChargeAmount })}
+                  className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-xs sm:text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#083028] focus:bg-white transition appearance-none cursor-pointer"
+                >
+                  <option value="standard">Standard Item (Free Delivery - Green Tag)</option>
+                  <option value="low_margin">Low Margin / Wholesale (+ Delivery - Orange Tag)</option>
+                </select>
+                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                </div>
+              </div>
+            </div>
+
+            {/* Live Preview Badge */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Preview Tag:</span>
+              {formData.deliveryType === 'standard' ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                  <Truck size={11} className="shrink-0" /> Free Delivery
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-orange-700 bg-orange-50 px-2.5 py-1 rounded-full border border-orange-200">
+                  <Package size={11} className="shrink-0" />
+                  + {formData.deliveryChargeAmount > 0 ? `₹${formData.deliveryChargeAmount}` : 'Delivery'} Charge
+                </span>
+              )}
+            </div>
+
+            {/* Delivery Charge Amount — only shown for low_margin */}
+            {formData.deliveryType === 'low_margin' && (
+              <div className="bg-orange-50/60 border border-orange-200/70 rounded-xl p-4 space-y-2">
+                <label className="block text-[11px] font-semibold text-orange-800 uppercase tracking-wide">
+                  Fixed Delivery Charge (₹)
+                </label>
+                <p className="text-[10px] text-orange-600">
+                  This amount will be shown on the product card, product page, cart, and checkout as a mandatory delivery fee. It does NOT count towards the free delivery threshold.
+                </p>
+                <div className="relative max-w-[200px]">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-orange-600">₹</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={formData.deliveryChargeAmount}
+                    onChange={(e) => setFormData({ ...formData, deliveryChargeAmount: Math.max(0, Number(e.target.value)) })}
+                    className="w-full pl-7 pr-3.5 py-2 bg-white border border-orange-200 rounded-xl text-sm font-bold text-orange-800 focus:outline-none focus:ring-2 focus:ring-orange-400 transition"
+                    placeholder="e.g. 120"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Info note */}
+            <p className="text-[10px] text-gray-400 leading-relaxed">
+              <strong>Standard Item:</strong> Follows zone-based free delivery thresholds (green tag shown when eligible).<br/>
+              <strong>Low Margin / Wholesale:</strong> Always shows a fixed delivery charge (orange tag). This product does NOT count towards the free delivery threshold, even if the cart total is high.
+            </p>
+          </div>
+        </div>
+
+        {/* ════ SECTION 8: SHOW ON HOMEPAGE SECTIONS (Screenshot 2) ════ */}
         <div className="bg-white rounded-2xl border border-gray-200/80 p-5 sm:p-6 shadow-xs space-y-3">
           <div className="flex items-center gap-2.5 pb-2 border-b border-gray-100">
             <Home size={18} className="text-[#083028]" />

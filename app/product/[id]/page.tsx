@@ -8,7 +8,7 @@ import {
   ShoppingCart, Share2, ShieldCheck, Truck, RotateCcw,
   CheckCircle2, ChevronRight, ArrowLeft, Loader2, Sparkles,
   Minus, Plus, CreditCard, Tag, Ticket, Check, AlertCircle, Percent, RefreshCw, Star, User, Heart,
-  PackageCheck, BadgeCheck
+  PackageCheck, BadgeCheck, Package, Info
 } from 'lucide-react';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
@@ -18,8 +18,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { useWishlist } from '@/context/WishlistContext';
 import { useShippingSettings } from '@/context/ShippingSettingsContext';
+import { useZonePriceRules } from '@/context/ZonePriceRulesContext';
 import { calculateZoneDelivery, DEFAULT_ZONE_SETTINGS, DetectedZoneResult } from '@/lib/zoneShipping';
-import { MapPin, Navigation } from 'lucide-react';
+import { MapPin, Navigation, TrendingUp, TrendingDown } from 'lucide-react';
 
 interface ProductData {
   id: string;
@@ -42,6 +43,8 @@ interface ProductData {
   youtubeUrl?: string;
   facebookUrl?: string;
   instagramUrl?: string;
+  deliveryType?: 'standard' | 'low_margin';
+  deliveryChargeAmount?: number;
 }
 
 interface ProductReview {
@@ -66,6 +69,7 @@ export default function ProductDetailPage() {
   const { toast } = useToast();
   const { isInWishlist, toggleWishlist } = useWishlist();
   const { settings: shippingSettings, zoneSettings } = useShippingSettings();
+  const { getZonePrice } = useZonePriceRules();
   const [deliveryPincode, setDeliveryPincode] = useState<string>('');
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [detectedLocationName, setDetectedLocationName] = useState('');
@@ -250,6 +254,8 @@ export default function ProductDetailPage() {
           youtubeUrl: (data.youtube_url as string) || (data.youtubeUrl as string) || '',
           facebookUrl: (data.facebook_url as string) || (data.facebookUrl as string) || '',
           instagramUrl: (data.instagram_url as string) || (data.instagramUrl as string) || '',
+          deliveryType: (data.delivery_type === 'low_margin' ? 'low_margin' : 'standard') as 'standard' | 'low_margin',
+          deliveryChargeAmount: Number(data.delivery_charge_amount ?? 0),
         };
 
         setProduct(mapped);
@@ -408,6 +414,29 @@ export default function ProductDetailPage() {
     }
   };
 
+  // ── Zone Price Markup & Pricing Calculations ──────────────────────────────
+  const rawUnitPrice = product
+    ? (product.numericPrice || parseInt(product.price.replace(/[^\d]/g, '') || '0', 10))
+    : 0;
+  const zonePrice = getZonePrice(
+    rawUnitPrice,
+    {
+      categoryId: product?.categoryId,
+      categoryName: product?.category,
+      category: product?.category,
+      subcategoryId: product?.subcategoryId,
+      subcategoryName: product?.subcategoryName,
+    },
+    product?.subcategoryId || null,
+    { pincode: deliveryPincode, city: detectedLocationName }
+  );
+  const hasZoneMarkup = Boolean(product) && zonePrice.hasRule && zonePrice.displayPrice !== rawUnitPrice;
+  const effectiveUnitPrice = hasZoneMarkup ? zonePrice.displayPrice : rawUnitPrice;
+  const quantityTotal = effectiveUnitPrice * quantity;
+  const discountedTotal = appliedCoupon
+    ? Math.max(0, quantityTotal - appliedCoupon.discountAmount)
+    : quantityTotal;
+
   // Handle Apply Coupon with category validation
   const handleApplyCoupon = async (codeToUse?: string) => {
     if (!product) return;
@@ -422,8 +451,7 @@ export default function ProductDetailPage() {
     setCouponError('');
     setCouponSuccess('');
 
-    const unitPrice = product.numericPrice || parseInt(product.price.replace(/[^\d]/g, '') || '0', 10);
-    const orderTotal = unitPrice * quantity;
+    const orderTotal = quantityTotal;
 
     try {
       const res = await fetch('/api/coupons/validate', {
@@ -501,10 +529,16 @@ export default function ProductDetailPage() {
     addToCart({
       id: product.id,
       name: product.name,
-      price: product.price,
-      numericPrice: product.numericPrice,
+      price: hasZoneMarkup ? `₹${effectiveUnitPrice.toLocaleString('en-IN')}` : product.price,
+      numericPrice: effectiveUnitPrice,
+      originalNumericPrice: rawUnitPrice,
       image: product.image,
       category: product.category,
+      categoryId: product.categoryId,
+      subcategoryId: product.subcategoryId,
+      subcategoryName: product.subcategoryName,
+      deliveryType: product.deliveryType,
+      deliveryChargeAmount: product.deliveryChargeAmount,
     }, quantity);
     setAddedToCart(true);
     setTimeout(() => setAddedToCart(false), 2000);
@@ -607,12 +641,6 @@ export default function ProductDetailPage() {
       : Math.max(0, selectedImageIndex - 1);
     selectGalleryImage(nextIndex);
   };
-  const unitPrice = product.numericPrice
-    || parseInt(product.price.replace(/[^\d]/g, '') || '0', 10);
-  const quantityTotal = unitPrice * quantity;
-  const discountedTotal = appliedCoupon
-    ? Math.max(0, quantityTotal - appliedCoupon.discountAmount)
-    : quantityTotal;
 
   return (
     <div className="min-h-screen bg-[#FAF8F3]">
@@ -893,21 +921,47 @@ export default function ProductDetailPage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-baseline gap-2">
                       <p className="break-words text-[1.7rem] font-black leading-none tracking-tight text-[#083028]">
-                        {appliedCoupon ? `₹${discountedTotal.toLocaleString('en-IN')}` : product.price}
+                        {appliedCoupon
+                          ? `₹${discountedTotal.toLocaleString('en-IN')}`
+                          : `₹${effectiveUnitPrice.toLocaleString('en-IN')}`}
                       </p>
+                      {/* Strikethrough original price if zone markup applied */}
+                      {!appliedCoupon && hasZoneMarkup && (
+                        <span className="text-xs font-semibold text-gray-400 line-through">
+                          {product.price}
+                        </span>
+                      )}
                       {appliedCoupon && (
                         <span className="text-xs font-semibold text-gray-400 line-through">
                           ₹{quantityTotal.toLocaleString('en-IN')}
                         </span>
                       )}
                     </div>
+                    {/* Zone markup badge */}
+                    {!appliedCoupon && hasZoneMarkup && (
+                      <span className={`mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold ${
+                        zonePrice.discountPercent > 0
+                          ? 'bg-blue-100 text-blue-700'
+                          : zonePrice.markupDirection === 'increase'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-red-100 text-red-700'
+                      }`}>
+                        {zonePrice.discountPercent > 0 ? (
+                          <>{zonePrice.discountPercent}% OFF</>
+                        ) : zonePrice.markupDirection === 'increase' ? (
+                          <><TrendingUp size={10} />+{zonePrice.markupPercent}% Zone Markup</>
+                        ) : (
+                          <><TrendingDown size={10} />-{zonePrice.markupPercent}% Zone Discount</>
+                        )}
+                      </span>
+                    )}
                     {appliedCoupon ? (
                       <span className="mt-1 inline-flex rounded-full bg-rose-500 px-2 py-0.5 text-[9px] font-bold text-white">
                         Saved ₹{appliedCoupon.discountAmount}
                       </span>
-                    ) : (
+                    ) : !hasZoneMarkup ? (
                       <span className="mt-1 block text-[9px] font-medium text-gray-500">Inclusive of all taxes</span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
                 <div className="flex min-w-[116px] flex-col justify-center rounded-2xl bg-[#ECF9F1] px-3 py-2.5 text-emerald-800">
@@ -978,8 +1032,32 @@ export default function ProductDetailPage() {
                 </button>
               </div>
 
-              {/* Delivery info box - Hidden completely when Zone is OFF (Kill Switch) */}
-              {currentZoneResult.zone.isActive && (
+              {/* Delivery info box - Hidden for low_margin or if zone is OFF */}
+              {product?.deliveryType === 'low_margin' ? (
+                /* Orange box for low-margin products */
+                <div className="mt-3 flex min-h-[54px] items-center gap-2.5 rounded-2xl bg-orange-50 border border-orange-200/70 px-3 py-2 text-orange-700">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-100 shadow-sm">
+                    <Package size={22} strokeWidth={2.2} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-black leading-tight min-[380px]:text-sm">
+                      + ₹{product.deliveryChargeAmount ?? 0} Delivery Charges
+                    </p>
+                    <p className="mt-0.5 text-[9px] font-medium leading-none text-orange-500 min-[380px]:text-[10px]">
+                      Low margin product — does not qualify for free delivery
+                    </p>
+                  </div>
+                  <div className="relative group/dtip cursor-pointer">
+                    <Info size={18} className="text-orange-400" />
+                    <span className="pointer-events-none absolute bottom-full right-0 mb-2 w-60 z-50 rounded-xl bg-gray-900 text-white text-[10px] leading-relaxed p-2.5 shadow-xl opacity-0 group-hover/dtip:opacity-100 transition-opacity duration-200">
+                      <span className="font-bold block mb-0.5">Why No Free Delivery? / फ्री डिलीवरी क्यों नहीं?</span>
+                      Sold at razor-thin wholesale margins, this product does not count towards the Free Delivery threshold.
+                      <span className="block mt-0.5 text-gray-300">इस प्रोडक्ट की कीमत बहुत कम मार्जिन पर तय की गई है। इसलिए यह फ्री डिलीवरी छूट के अंतर्गत नहीं आता है।</span>
+                    </span>
+                  </div>
+                </div>
+              ) : currentZoneResult.zone.isActive && (
+                /* Green box for standard products (zone-based) */
                 <div className="mt-3 flex min-h-[54px] items-center gap-2.5 rounded-2xl bg-[#EAF8F1] px-3 py-2 text-[#07523F]">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#D8F2E4] shadow-sm">
                     <Truck size={24} strokeWidth={2.2} />
@@ -1127,12 +1205,36 @@ export default function ProductDetailPage() {
                   </div>
                 ) : (
                   <div>
-                    <p className="break-words text-2xl font-black tracking-tight text-[#083028] sm:text-3xl">
-                      {quantity > 1
-                        ? `₹${quantityTotal.toLocaleString('en-IN')}`
-                        : product.price}
-                    </p>
-                    <p className="mt-0.5 text-[10px] font-medium text-gray-500">Inclusive of all taxes</p>
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <p className="break-words text-2xl font-black tracking-tight text-[#083028] sm:text-3xl">
+                        ₹{quantityTotal.toLocaleString('en-IN')}
+                      </p>
+                      {hasZoneMarkup && (
+                        <span className="text-sm font-semibold text-gray-400 line-through">
+                          {quantity > 1 ? `₹${(rawUnitPrice * quantity).toLocaleString('en-IN')}` : product.price}
+                        </span>
+                      )}
+                    </div>
+                    {/* Zone markup badge */}
+                    {hasZoneMarkup ? (
+                      <span className={`mt-1.5 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                        zonePrice.discountPercent > 0
+                          ? 'bg-blue-100 text-blue-700'
+                          : zonePrice.markupDirection === 'increase'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-red-100 text-red-700'
+                      }`}>
+                        {zonePrice.discountPercent > 0 ? (
+                          <>{zonePrice.discountPercent}% OFF</>
+                        ) : zonePrice.markupDirection === 'increase' ? (
+                          <><TrendingUp size={11} />+{zonePrice.markupPercent}% Zone Markup</>
+                        ) : (
+                          <><TrendingDown size={11} />-{zonePrice.markupPercent}% Zone Discount</>
+                        )}
+                      </span>
+                    ) : (
+                      <p className="mt-0.5 text-[10px] font-medium text-gray-500">Inclusive of all taxes</p>
+                    )}
                   </div>
                 )}
               </div>

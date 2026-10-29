@@ -200,6 +200,9 @@ export async function POST(request: Request) {
     youtube_url: body.youtubeUrl || body.youtube_url || '',
     facebook_url: body.facebookUrl || body.facebook_url || '',
     instagram_url: body.instagramUrl || body.instagram_url || '',
+    // Delivery Type
+    delivery_type: body.deliveryType || body.delivery_type || 'standard',
+    delivery_charge_amount: Number(body.deliveryChargeAmount ?? body.delivery_charge_amount ?? 0),
   };
 
   // Attempt insert
@@ -318,6 +321,12 @@ export async function PATCH(request: Request) {
   if (body.facebook_url !== undefined) patch.facebook_url = body.facebook_url;
   if (body.instagramUrl !== undefined) patch.instagram_url = body.instagramUrl;
   if (body.instagram_url !== undefined) patch.instagram_url = body.instagram_url;
+
+  // Delivery Type
+  if (body.deliveryType !== undefined) patch.delivery_type = body.deliveryType;
+  if (body.delivery_type !== undefined) patch.delivery_type = body.delivery_type;
+  if (body.deliveryChargeAmount !== undefined) patch.delivery_charge_amount = Number(body.deliveryChargeAmount);
+  if (body.delivery_charge_amount !== undefined) patch.delivery_charge_amount = Number(body.delivery_charge_amount);
 
   // Category
   if (body.categoryId !== undefined || body.category !== undefined) {

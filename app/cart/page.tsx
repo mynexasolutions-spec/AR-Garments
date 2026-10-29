@@ -69,8 +69,25 @@ export default function CartPage() {
       if (pinInfo) cartUserPin = JSON.parse(pinInfo).pincode || '';
     } catch {}
   }
+
+  // Low-margin items get a fixed delivery charge; only standard items count towards free delivery threshold
+  const lowMarginDeliveryTotal = items.reduce((sum, item) => {
+    if (item.deliveryType === 'low_margin') {
+      return sum + (item.deliveryChargeAmount ?? 0) * item.quantity;
+    }
+    return sum;
+  }, 0);
+  const standardSubtotal = items.reduce((sum, item) => {
+    if (item.deliveryType !== 'low_margin') {
+      const uPrice = item.effectivePrice ?? item.numericPrice;
+      return sum + uPrice * item.quantity;
+    }
+    return sum;
+  }, 0);
+  const hasLowMarginItems = items.some((item) => item.deliveryType === 'low_margin');
+
   const cartActiveZone = calculateZoneDelivery(
-    subtotal,
+    standardSubtotal, // use only standard items for threshold check
     cartUserPin,
     zoneSettings && zoneSettings.length > 0 ? zoneSettings : DEFAULT_ZONE_SETTINGS
   );
@@ -343,9 +360,42 @@ export default function CartPage() {
                         >
                           {item.name}
                         </Link>
-                        <p className="text-xs sm:text-sm font-bold text-[#083028] mt-1 sm:hidden">
-                          {item.price}
-                        </p>
+                        {/* Mobile Price & Zone markup */}
+                        <div className="mt-1 sm:hidden">
+                          {item.zonePrice?.hasRule && item.effectivePrice !== (item.originalNumericPrice || item.numericPrice) ? (
+                            <div className="flex items-baseline gap-1 flex-wrap">
+                              <span className="text-xs sm:text-sm font-black text-[#083028]">
+                                ₹{(item.effectivePrice || item.numericPrice).toLocaleString('en-IN')}
+                              </span>
+                              <span className="text-[10px] text-gray-400 line-through">
+                                ₹{(item.originalNumericPrice || item.numericPrice).toLocaleString('en-IN')}
+                              </span>
+                              <span className={`inline-flex items-center gap-0.5 text-[8px] font-bold px-1 rounded ${
+                                (item.zonePrice.discountPercent ?? 0) > 0
+                                  ? 'bg-blue-100 text-blue-700'
+                                  : item.zonePrice.markupDirection === 'increase'
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-red-100 text-red-700'
+                              }`}>
+                                {(item.zonePrice.discountPercent ?? 0) > 0
+                                  ? `${item.zonePrice.discountPercent}% OFF`
+                                  : item.zonePrice.markupDirection === 'increase'
+                                  ? `+${item.zonePrice.markupPercent}% Zone Markup`
+                                  : `-${item.zonePrice.markupPercent}%`}
+                              </span>
+                            </div>
+                          ) : (
+                            <p className="text-xs sm:text-sm font-bold text-[#083028]">
+                              {item.price}
+                            </p>
+                          )}
+                        </div>
+                        {/* Delivery type badge for low-margin items */}
+                        {item.deliveryType === 'low_margin' && (
+                          <span className="inline-flex items-center gap-1 mt-1 text-[9px] font-bold text-orange-700 bg-orange-50 border border-orange-200/70 px-1.5 py-0.5 rounded">
+                            📦 + ₹{item.deliveryChargeAmount ?? 0} Delivery
+                          </span>
+                        )}
 
                         {/* Mobile Stepper & Remove */}
                         <div className="flex items-center justify-between mt-3 sm:hidden pt-2 border-t border-gray-100">
@@ -373,7 +423,7 @@ export default function CartPage() {
                           {/* Line total & remove */}
                           <div className="flex items-center gap-3">
                             <span className="text-xs font-extrabold text-gray-900">
-                              ₹{(item.numericPrice * item.quantity).toLocaleString()}
+                              ₹{(((item.effectivePrice ?? item.numericPrice) * item.quantity)).toLocaleString('en-IN')}
                             </span>
                             <button
                               onClick={() => removeFromCart(item.id)}
@@ -389,11 +439,35 @@ export default function CartPage() {
 
                     {/* Tablet & Desktop View Columns */}
                     <div className="hidden sm:flex sm:items-center sm:justify-between gap-6 sm:w-1/2">
-                      {/* Unit Price */}
-                      <div className="text-center w-24">
-                        <span className="text-sm font-semibold text-gray-700">
-                          {item.price}
-                        </span>
+                      {/* Unit Price with Zone Markup */}
+                      <div className="text-center w-28">
+                        {item.zonePrice?.hasRule && item.effectivePrice !== (item.originalNumericPrice || item.numericPrice) ? (
+                          <div className="flex flex-col items-center">
+                            <span className="text-sm font-black text-[#083028]">
+                              ₹{(item.effectivePrice || item.numericPrice).toLocaleString('en-IN')}
+                            </span>
+                            <span className="text-[10px] text-gray-400 line-through">
+                              ₹{(item.originalNumericPrice || item.numericPrice).toLocaleString('en-IN')}
+                            </span>
+                            <span className={`inline-flex items-center gap-0.5 text-[8px] font-bold px-1.5 py-0.5 rounded mt-0.5 ${
+                              (item.zonePrice.discountPercent ?? 0) > 0
+                                ? 'bg-blue-100 text-blue-700'
+                                : item.zonePrice.markupDirection === 'increase'
+                                ? 'bg-amber-100 text-amber-700'
+                                : 'bg-red-100 text-red-700'
+                            }`}>
+                              {(item.zonePrice.discountPercent ?? 0) > 0
+                                ? `${item.zonePrice.discountPercent}% OFF`
+                                : item.zonePrice.markupDirection === 'increase'
+                                ? `+${item.zonePrice.markupPercent}%`
+                                : `-${item.zonePrice.markupPercent}%`}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-sm font-semibold text-gray-700">
+                            {item.price}
+                          </span>
+                        )}
                       </div>
 
                       {/* Desktop Stepper */}
@@ -420,7 +494,7 @@ export default function CartPage() {
                       {/* Line Subtotal */}
                       <div className="text-right w-24">
                         <span className="text-base font-extrabold text-gray-900">
-                          ₹{(item.numericPrice * item.quantity).toLocaleString()}
+                          ₹{(((item.effectivePrice ?? item.numericPrice) * item.quantity)).toLocaleString('en-IN')}
                         </span>
                       </div>
 
@@ -495,6 +569,14 @@ export default function CartPage() {
                     </span>
                   </div>
 
+                  {/* Low-margin delivery charges row */}
+                  {lowMarginDeliveryTotal > 0 && (
+                    <div className="flex justify-between text-orange-700 bg-orange-50/60 px-2.5 py-1.5 rounded-lg text-xs">
+                      <span className="flex items-center gap-1">📦 Wholesale Item Delivery</span>
+                      <span className="font-bold">₹{lowMarginDeliveryTotal.toLocaleString()}</span>
+                    </div>
+                  )}
+
                   {/* Free Delivery Threshold Box - Destroyed / Hidden when Zone is OFF */}
                   {cartActiveZone.zone.isActive &&
                     cartActiveZone.amountNeededForFreeDelivery > 0 &&
@@ -502,6 +584,9 @@ export default function CartPage() {
                     <p className="text-[11px] bg-amber-50 text-amber-800 p-2 rounded-lg leading-tight">
                       Add ₹{cartActiveZone.amountNeededForFreeDelivery.toLocaleString('en-IN')} more to qualify for{' '}
                       <strong>FREE Delivery</strong>!
+                      {hasLowMarginItems && (
+                        <span className="block mt-0.5 text-orange-600">⚠️ Wholesale items are excluded from this threshold.</span>
+                      )}
                     </p>
                   )}
 

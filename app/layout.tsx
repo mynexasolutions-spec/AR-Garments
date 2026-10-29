@@ -7,6 +7,7 @@ import { ToastProvider } from "@/context/ToastContext";
 import { WishlistProvider } from "@/context/WishlistContext";
 import BottomWidgetsNav from "@/components/BottomWidgetsNav";
 import { ShippingSettingsProvider } from "@/context/ShippingSettingsContext";
+import { ZonePriceRulesProvider } from "@/context/ZonePriceRulesContext";
 import MotionEnhancer from "@/components/MotionEnhancer";
 
 const inter = Inter({ subsets: ["latin"], variable: '--font-inter' });
@@ -31,13 +32,15 @@ export default function RootLayout({
         <ToastProvider>
           <AuthProvider>
             <ShippingSettingsProvider>
-              <CartProvider>
-                <WishlistProvider>
-                  {children}
-                  <BottomWidgetsNav />
-                  <MotionEnhancer />
-                </WishlistProvider>
-              </CartProvider>
+              <ZonePriceRulesProvider>
+                <CartProvider>
+                  <WishlistProvider>
+                    {children}
+                    <BottomWidgetsNav />
+                    <MotionEnhancer />
+                  </WishlistProvider>
+                </CartProvider>
+              </ZonePriceRulesProvider>
             </ShippingSettingsProvider>
           </AuthProvider>
         </ToastProvider>

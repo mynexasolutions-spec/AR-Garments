@@ -25,7 +25,7 @@
       "211019"
     ],
     "sortOrder": 1,
-    "updatedAt": "2026-10-28T18:08:41.384Z"
+    "updatedAt": "2026-10-29T14:14:07.741Z"
   },
   {
     "id": "zone_dehat",
@@ -70,17 +70,17 @@
       "212412"
     ],
     "sortOrder": 2,
-    "updatedAt": "2026-10-28T18:08:41.384Z"
+    "updatedAt": "2026-10-29T14:14:07.741Z"
   },
   {
     "id": "zone_pan_india",
     "zoneName": "Zone 3: Pan India",
     "zoneNameHi": "पैन इंडिया",
     "isActive": true,
-    "freeDeliveryThreshold": 800,
-    "standardDeliveryFee": 160,
+    "freeDeliveryThreshold": 1600,
+    "standardDeliveryFee": 170,
     "customPincodes": [],
     "sortOrder": 3,
-    "updatedAt": "2026-10-28T18:08:41.384Z"
+    "updatedAt": "2026-10-29T14:14:07.741Z"
   }
 ]

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import {
@@ -25,6 +25,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { calculateZoneDelivery, DEFAULT_ZONE_SETTINGS, DetectedZoneResult } from '@/lib/zoneShipping';
 import { useShippingSettings } from '@/context/ShippingSettingsContext';
+import { ZonePriceResult } from '@/lib/zonePriceMarkup';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -260,14 +261,27 @@ function OrderSummary({
   shippingReady,
   total,
   zoneResult,
+  lowMarginDeliveryTotal,
 }: {
   zoneResult?: DetectedZoneResult;
-  items: { id: string; name: string; image?: string; quantity: number; price: number }[];
+  items: {
+    id: string;
+    name: string;
+    image?: string;
+    quantity: number;
+    price: number;
+    originalBasePrice?: number;
+    hasZoneMarkup?: boolean;
+    zonePrice?: ZonePriceResult;
+    deliveryType?: string;
+    deliveryChargeAmount?: number;
+  }[];
   subtotal: number;
   discount: number;
   shipping: number;
   shippingReady: boolean;
   total: number;
+  lowMarginDeliveryTotal?: number;
 }) {
   return (
     <div className="bg-white rounded-2xl border border-[#083028]/10 shadow-sm overflow-hidden">
@@ -298,11 +312,35 @@ function OrderSummary({
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-[#083028] truncate">{item.name}</p>
-              <p className="text-xs text-[#083028]/60">Qty: {item.quantity}</p>
+              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                <p className="text-xs text-[#083028]/60">Qty: {item.quantity}</p>
+                {item.hasZoneMarkup && item.zonePrice && (
+                  <span className={`inline-flex items-center text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                    (item.zonePrice.discountPercent ?? 0) > 0
+                      ? 'bg-blue-100 text-blue-700'
+                      : item.zonePrice.markupDirection === 'increase'
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-red-100 text-red-700'
+                  }`}>
+                    {(item.zonePrice.discountPercent ?? 0) > 0
+                      ? `${item.zonePrice.discountPercent}% OFF`
+                      : item.zonePrice.markupDirection === 'increase'
+                      ? `+${item.zonePrice.markupPercent}% Zone Markup`
+                      : `-${item.zonePrice.markupPercent}%`}
+                  </span>
+                )}
+              </div>
             </div>
-            <p className="text-sm font-semibold text-[#083028] shrink-0">
-              ₹{(item.price * item.quantity).toLocaleString('en-IN')}
-            </p>
+            <div className="text-right shrink-0">
+              <p className="text-sm font-semibold text-[#083028]">
+                ₹{(item.price * item.quantity).toLocaleString('en-IN')}
+              </p>
+              {item.hasZoneMarkup && item.originalBasePrice && (
+                <p className="text-[10px] text-gray-400 line-through">
+                  ₹{(item.originalBasePrice * item.quantity).toLocaleString('en-IN')}
+                </p>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -319,6 +357,13 @@ function OrderSummary({
               <Tag size={13} /> Discount
             </span>
             <span>-₹{discount.toLocaleString('en-IN')}</span>
+          </div>
+        )}
+        {/* Low-margin delivery charges */}
+        {lowMarginDeliveryTotal != null && lowMarginDeliveryTotal > 0 && (
+          <div className="flex justify-between text-sm text-orange-700 bg-orange-50/60 px-2 py-1 rounded-lg">
+            <span className="flex items-center gap-1">📦 Wholesale Delivery</span>
+            <span className="font-semibold">₹{lowMarginDeliveryTotal.toLocaleString('en-IN')}</span>
           </div>
         )}
         <div className="flex justify-between text-sm text-[#083028]/70">
@@ -442,14 +487,15 @@ export default function CheckoutPage() {
   const {
     items,
     clearCart,
-    subtotal,
-    shipping,
-    discountAmount,
-    finalTotal,
+    subtotal: cartSubtotal,
+    shipping: cartShipping,
+    discountAmount: cartDiscount,
+    finalTotal: cartFinalTotal,
     appliedCoupon,
     shippingSettings,
     shippingSettingsLoading,
     shippingSettingsError,
+    getItemZonePrice,
   } = useCart();
   const { zoneSettings } = useShippingSettings();
   const { user, loading: authLoading } = useAuth();
@@ -465,11 +511,70 @@ export default function CheckoutPage() {
     pincode: '',
   });
 
+  // Calculate zone-aware prices for checkout based on delivery location
+  const checkoutLocation = useMemo(() => {
+    if (form.pincode || form.city) {
+      return { pincode: form.pincode, city: form.city };
+    }
+    return undefined; // fallback to saved location in localStorage
+  }, [form.pincode, form.city]);
+
+  const checkoutItems = useMemo(() => {
+    return items.map((item) => {
+      const zPrice = getItemZonePrice(item, checkoutLocation);
+      const effectivePrice = zPrice.hasRule ? zPrice.displayPrice : item.numericPrice;
+      const basePrice = item.originalNumericPrice || item.numericPrice;
+      const hasZoneMarkup = zPrice.hasRule && effectivePrice !== basePrice;
+      return {
+        ...item,
+        price: effectivePrice,
+        originalBasePrice: basePrice,
+        hasZoneMarkup,
+        zonePrice: zPrice,
+      };
+    });
+  }, [items, getItemZonePrice, checkoutLocation]);
+
+  const checkoutSubtotal = useMemo(() => {
+    return checkoutItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  }, [checkoutItems]);
+
+  const standardSubtotal = useMemo(() => {
+    return checkoutItems.reduce((sum, item) => {
+      return item.deliveryType !== 'low_margin' ? sum + item.price * item.quantity : sum;
+    }, 0);
+  }, [checkoutItems]);
+
+  const lowMarginDeliveryTotal = useMemo(() => {
+    return checkoutItems.reduce((sum, item) => {
+      return item.deliveryType === 'low_margin'
+        ? sum + (item.deliveryChargeAmount ?? 0) * item.quantity
+        : sum;
+    }, 0);
+  }, [checkoutItems]);
+
   const checkoutZoneResult = calculateZoneDelivery(
-    subtotal,
+    standardSubtotal, // only standard items for free-delivery threshold
     form.pincode,
     zoneSettings && zoneSettings.length > 0 ? zoneSettings : DEFAULT_ZONE_SETTINGS
   );
+
+  const checkoutDiscount = useMemo(() => {
+    if (!appliedCoupon || checkoutSubtotal < (appliedCoupon.minOrderValue || 0)) return 0;
+    if (appliedCoupon.discountType === 'percentage') {
+      const d = Math.round((checkoutSubtotal * appliedCoupon.discountValue) / 100);
+      return appliedCoupon.maxDiscountAmount && d > appliedCoupon.maxDiscountAmount
+        ? appliedCoupon.maxDiscountAmount
+        : d;
+    }
+    if (appliedCoupon.discountType === 'flat') {
+      return appliedCoupon.discountValue;
+    }
+    return 0;
+  }, [appliedCoupon, checkoutSubtotal]);
+
+  const checkoutShipping = checkoutZoneResult.deliveryFee;
+  const checkoutTotal = Math.max(0, checkoutSubtotal - checkoutDiscount + checkoutShipping + lowMarginDeliveryTotal);
 
   const [paymentMethod, setPaymentMethod] = useState<'cod' | 'online'>('cod');
   const [errors, setErrors] = useState<Partial<DeliveryForm>>({});
@@ -544,15 +649,19 @@ export default function CheckoutPage() {
 
   // ── Pricing ───────────────────────────────────────────────────────────────────
 
-  const discount = discountAmount;
-  const total = finalTotal;
+  const discount = checkoutDiscount;
+  const total = checkoutTotal;
+  const subtotal = checkoutSubtotal;
+  const shipping = checkoutShipping;
 
-  const cartSummaryItems = items.map((item) => ({
+  const cartSummaryItems = checkoutItems.map((item) => ({
     id: item.id,
     name: item.name,
     image: item.image,
     quantity: item.quantity,
-    price: item.numericPrice,
+    price: item.price,
+    deliveryType: item.deliveryType,
+    deliveryChargeAmount: item.deliveryChargeAmount,
   }));
 
   // ── Validation ────────────────────────────────────────────────────────────────
@@ -929,12 +1038,13 @@ export default function CheckoutPage() {
               {/* Mobile-only order summary */}
               <div className="lg:hidden">
                 <OrderSummary
-                  items={cartSummaryItems}
+                  items={checkoutItems}
                   subtotal={subtotal}
                   discount={discount}
                   shipping={shipping}
                   shippingReady={Boolean(shippingSettings)}
                   total={total}
+                  lowMarginDeliveryTotal={lowMarginDeliveryTotal}
                 />
               </div>
 
@@ -980,13 +1090,14 @@ export default function CheckoutPage() {
             {/* ── Right: Order Summary (desktop) ─────────────────────────── */}
             <div className="hidden lg:block w-full lg:w-[360px] lg:sticky lg:top-24">
               <OrderSummary
-                items={cartSummaryItems}
+                items={checkoutItems}
                 subtotal={subtotal}
                 discount={discount}
                 shipping={shipping}
                 shippingReady={Boolean(shippingSettings)}
                 total={total}
                 zoneResult={checkoutZoneResult}
+                lowMarginDeliveryTotal={lowMarginDeliveryTotal}
               />
 
               {/* Free shipping notice - Completely Hidden / Destroyed when Zone is OFF */}
