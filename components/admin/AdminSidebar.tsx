@@ -20,6 +20,7 @@ import {
   Mail,
   MessageSquare,
   Truck,
+  Bike,
 } from 'lucide-react';
 import { useState } from 'react';
 import { adminAuth } from '@/lib/adminData';
@@ -35,6 +36,7 @@ const navItems = [
   { label: 'Product Reviews', href: '/admin/reviews', icon: Star },
   { label: 'Coupons & Discounts', href: '/admin/coupons', icon: Ticket },
   { label: 'Zone Active / Shipping', href: '/admin/shipping-settings', icon: Truck },
+  { label: 'Delivery Partners', href: '/admin/delivery-partners', icon: Bike },
   { label: 'Newsletter', href: '/admin/newsletter', icon: Mail },
   { label: 'Home Page', href: '/admin/homepage', icon: Home },
 ];

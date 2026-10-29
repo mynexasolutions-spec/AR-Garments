@@ -80,6 +80,13 @@ export interface Order {
   trackingStatus?: string;
   currentLocation?: string;
   trackingUpdatedAt?: string;
+  deliveryPartnerId?: string;
+  deliveryPartnerName?: string;
+  deliveryZoneId?: string;
+  deliveryZoneName?: string;
+  dispatchType?: 'internal' | 'external';
+  dispatchStatus?: 'pending' | 'assigned' | 'booked' | 'dispatched' | 'manual_review';
+  dispatchNotes?: string;
   createdAt: string;
   updatedAt?: string;
 }

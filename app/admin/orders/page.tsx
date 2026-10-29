@@ -12,6 +12,8 @@ import {
   Package,
   Phone,
   Truck,
+  ExternalLink,
+  Save,
 } from 'lucide-react';
 import {
   OrderFulfillmentProgress,
@@ -242,9 +244,27 @@ function AdminOrderCard({
         className="group flex w-full items-start justify-between gap-4 px-4 py-4 text-left sm:items-center sm:px-6 sm:py-5"
       >
         <div className="min-w-0">
-          <p className="truncate font-mono text-xs font-black text-[#9A6B0A]">{order.id}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-mono text-xs font-black text-[#9A6B0A]">{order.id}</p>
+            {order.deliveryZoneName && (
+              <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                📍 {order.deliveryZoneName}
+              </span>
+            )}
+            <span
+              className={`inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                order.dispatchType === 'external'
+                  ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+              }`}
+            >
+              🚚 {order.deliveryPartnerName || order.courierName || 'In-House Rider'}
+            </span>
+          </div>
           <p className="mt-1 truncate text-base font-black text-gray-900 sm:text-lg">{order.userName}</p>
-          <p className="mt-1 text-xs text-gray-500">{formatDateTime(order.createdAt)}</p>
+          <p className="mt-0.5 text-xs text-gray-500">
+            {formatDateTime(order.createdAt)} • {address.city || 'No City'}{address.pincode ? ` (${address.pincode})` : ''}
+          </p>
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-2">
@@ -302,10 +322,49 @@ function AdminOrderCard({
               )}
             </DetailCard>
 
-            <DetailCard icon={<Truck size={16} />} title="Delivery">
-              <p className="font-bold text-gray-900">{order.courierName || 'Not assigned'}</p>
-              <p>AWB: {order.awbNumber || 'Not assigned'}</p>
-              <p>Status: {order.trackingStatus || 'Awaiting shipment creation'}</p>
+            <DetailCard icon={<Truck size={16} />} title="Delivery & Dispatch">
+              <div className="font-bold text-gray-900 flex items-center justify-between gap-1">
+                <span>{order.deliveryPartnerName || order.courierName || 'In-House Rider'}</span>
+                <span className={`text-[9px] px-2 py-0.5 rounded font-black uppercase ${
+                  order.dispatchType === 'external' ? 'bg-blue-100 text-blue-800 border border-blue-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                }`}>
+                  {order.dispatchType === 'external' ? 'External Courier' : 'Internal Rider'}
+                </span>
+              </div>
+              <div className="text-[11px] text-[#B8860B] font-bold bg-amber-50 px-2 py-1 rounded border border-amber-200/60 mt-1">
+                📍 Zone: {order.deliveryZoneName || (order.shippingAddress?.pincode?.startsWith('211') ? 'Allahabad City' : order.shippingAddress?.pincode?.startsWith('212') ? 'Allahabad Rural' : 'Outside Allahabad / Pan India')}
+              </div>
+              <div className="text-xs text-gray-600 mt-1">
+                <span>Dispatch Status: </span>
+                <span className="font-bold uppercase text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-800">
+                  {order.dispatchStatus || order.trackingStatus || 'Pending'}
+                </span>
+              </div>
+              {order.dispatchNotes && (
+                <p className="text-[10px] text-gray-500 italic mt-0.5">{order.dispatchNotes}</p>
+              )}
+              <div className="mt-2 pt-2 border-t border-gray-200/60">
+                <p className="text-[10px] font-bold uppercase text-gray-500">AWB Tracking</p>
+                {order.awbNumber ? (
+                  <div className="mt-1 flex items-center justify-between gap-2 bg-white px-2 py-1.5 rounded-lg border border-gray-200">
+                    <span className="font-mono text-xs font-bold text-gray-900">{order.awbNumber}</span>
+                    {order.trackingUrl ? (
+                      <a
+                        href={order.trackingUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:underline"
+                      >
+                        Track <ExternalLink size={10} />
+                      </a>
+                    ) : (
+                      <span className="text-[10px] text-gray-400">Assigned</span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 italic mt-0.5">AWB not yet assigned</p>
+                )}
+              </div>
             </DetailCard>
 
             <DetailCard icon={<MapPin size={16} />} title="Shipping address">

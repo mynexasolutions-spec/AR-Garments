@@ -284,7 +284,9 @@ export function OrderShipmentTracking({ order }: { order: Order }) {
           </p>
           <div className="mt-1 flex items-center gap-2">
             <Truck size={18} className="text-[#083028]" />
-            <p className="text-base font-black text-gray-900">Powered by Shiprocket</p>
+            <p className="text-base font-black text-gray-900">
+              {order.deliveryPartnerName || order.courierName || (order.dispatchType === 'internal' ? 'In-House Rider Delivery' : 'Courier Dispatch')}
+            </p>
           </div>
         </div>
         <span

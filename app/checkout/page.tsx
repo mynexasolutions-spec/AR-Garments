@@ -715,6 +715,8 @@ export default function CheckoutPage() {
       userName: user?.name || form.fullName,
       userEmail: user?.email ?? '',
       deliveryAddress: form,
+      shippingAddress: form,
+      address: form,
       paymentMethod,
       items: cartSummaryItems,
       subtotal,

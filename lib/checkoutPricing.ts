@@ -2,6 +2,18 @@ import { getServiceSupabase } from '@/lib/supabase';
 import { OrderItem } from '@/lib/orders';
 import { calculateShippingCharge } from '@/lib/shipping';
 import { getShippingSettings } from '@/lib/shippingSettings.server';
+import {
+  ZonePriceRule,
+  mapDbRowToRule,
+  resolveMarkupZone,
+  findMatchingRule,
+  computeZonePrice,
+} from '@/lib/zonePriceMarkup';
+import {
+  ZoneShippingSetting,
+  DEFAULT_ZONE_SETTINGS,
+  calculateZoneDelivery,
+} from '@/lib/zoneShipping';
 
 interface CheckoutItemInput {
   id: string;
@@ -15,6 +27,11 @@ interface ProductRow {
   numeric_price: number;
   image: string;
   category: string;
+  category_id?: string | null;
+  subcategory_id?: string | null;
+  subcategory_name?: string | null;
+  delivery_type?: string | null;
+  delivery_charge_amount?: number | null;
   stock: number;
   active: boolean;
 }
@@ -70,17 +87,73 @@ function normalizeItems(rawItems: unknown): CheckoutItemInput[] {
 
 async function getProducts(items: CheckoutItemInput[]): Promise<Map<string, ProductRow>> {
   const supabase = getServiceSupabase();
-  const { data, error } = await supabase
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select('id, name, price, numeric_price, image, category, category_id, subcategory_id, subcategory_name, delivery_type, delivery_charge_amount, stock, active')
+      .in('id', items.map((item) => item.id));
+
+    if (!error && data) {
+      const rows = data as ProductRow[];
+      return new Map(rows.map((row) => [String(row.id), row]));
+    }
+  } catch {
+    // If newer columns don't exist yet, fallback to basic select
+  }
+
+  const { data: fallbackData, error: fallbackError } = await supabase
     .from('products')
     .select('id, name, price, numeric_price, image, category, stock, active')
     .in('id', items.map((item) => item.id));
 
-  if (error) {
-    throw new CheckoutPricingError(`Unable to validate catalogue prices: ${error.message}`);
+  if (fallbackError) {
+    throw new CheckoutPricingError(`Unable to validate catalogue prices: ${fallbackError.message}`);
   }
 
-  const rows = (data || []) as ProductRow[];
-  return new Map(rows.map((row) => [String(row.id), row]));
+  const fallbackRows = (fallbackData || []) as ProductRow[];
+  return new Map(fallbackRows.map((row) => [String(row.id), row]));
+}
+
+async function getZonePriceRules(): Promise<ZonePriceRule[]> {
+  try {
+    const supabase = getServiceSupabase();
+    const { data, error } = await supabase
+      .from('zone_price_rules')
+      .select('*');
+    if (!error && data) {
+      return data.map(mapDbRowToRule);
+    }
+  } catch {
+    // Ignore and fallback
+  }
+  return [];
+}
+
+async function getZoneShippingSettings(): Promise<ZoneShippingSetting[]> {
+  try {
+    const supabase = getServiceSupabase();
+    const { data, error } = await supabase
+      .from('zone_shipping_settings')
+      .select('*')
+      .order('sort_order', { ascending: true });
+
+    if (!error && data && data.length > 0) {
+      return data.map((row: Record<string, unknown>) => ({
+        id: String(row.id),
+        zoneName: String(row.zone_name || ''),
+        zoneNameHi: String(row.zone_name_hi || ''),
+        isActive: Boolean(row.is_active),
+        freeDeliveryThreshold: Number(row.free_delivery_threshold) || 0,
+        standardDeliveryFee: Number(row.standard_delivery_fee) || 0,
+        customPincodes: Array.isArray(row.custom_pincodes) ? (row.custom_pincodes as string[]) : [],
+        sortOrder: Number(row.sort_order) || 0,
+        updatedAt: row.updated_at ? String(row.updated_at) : null,
+      }));
+    }
+  } catch {
+    // Fallback to defaults
+  }
+  return DEFAULT_ZONE_SETTINGS;
 }
 
 async function getCoupon(code: string): Promise<CouponRow> {
@@ -150,12 +223,15 @@ function calculateCouponDiscount(
   return { discount, freeShipping: false };
 }
 
-export async function calculateCheckoutPricing(rawItems: unknown, rawCouponCode: unknown, rawPincode?: string): Promise<CheckoutPricing> {
-
-
-
+export async function calculateCheckoutPricing(
+  rawItems: unknown,
+  rawCouponCode: unknown,
+  rawPincode?: string | null,
+  rawCity?: string | null
+): Promise<CheckoutPricing> {
   const items = normalizeItems(rawItems);
   const productMap = await getProducts(items);
+
   const products = items.map((item) => {
     const product = productMap.get(item.id);
     if (!product || !product.active) {
@@ -170,37 +246,87 @@ export async function calculateCheckoutPricing(rawItems: unknown, rawCouponCode:
     return product;
   });
 
+  // Resolve Zone-Wise Markup Rules
+  const zoneRules = await getZonePriceRules();
+  const userMarkupZone = resolveMarkupZone(rawPincode, rawCity);
+
   const canonicalItems: OrderItem[] = items.map((item) => {
     const product = productMap.get(item.id)!;
+    const basePrice = Number(product.numeric_price);
+
+    const matchingRule = findMatchingRule(zoneRules, {
+      categoryId: product.category_id,
+      categoryName: product.category,
+      subcategoryId: product.subcategory_id,
+      subcategoryName: product.subcategory_name,
+    });
+
+    const zonePriceResult = computeZonePrice(basePrice, matchingRule, userMarkupZone);
+    const effectivePrice = zonePriceResult.hasRule ? zonePriceResult.displayPrice : basePrice;
+
     return {
       id: product.id,
       name: product.name,
-      price: product.price,
-      numericPrice: Number(product.numeric_price),
+      price: String(effectivePrice),
+      numericPrice: effectivePrice,
       image: product.image,
       category: product.category,
       quantity: item.quantity,
     };
   });
+
   const subtotal = canonicalItems.reduce(
     (sum, item) => sum + Number(item.numericPrice) * item.quantity,
     0
   );
 
+  const standardSubtotal = items.reduce((sum, item) => {
+    const product = productMap.get(item.id)!;
+    if (product.delivery_type !== 'low_margin') {
+      const canonical = canonicalItems.find((c) => c.id === item.id);
+      return sum + (canonical ? canonical.numericPrice! * item.quantity : 0);
+    }
+    return sum;
+  }, 0);
+
+  const lowMarginDeliveryTotal = items.reduce((sum, item) => {
+    const product = productMap.get(item.id)!;
+    if (product.delivery_type === 'low_margin') {
+      return sum + (Number(product.delivery_charge_amount) || 0) * item.quantity;
+    }
+    return sum;
+  }, 0);
+
   const couponCode = typeof rawCouponCode === 'string' ? rawCouponCode.trim().toUpperCase() : '';
   const couponResult = couponCode
     ? calculateCouponDiscount(await getCoupon(couponCode), products, subtotal)
     : { discount: 0, freeShipping: false };
-  const shippingSettings = await getShippingSettings();
-  const shipping = calculateShippingCharge(
-    subtotal,
-    shippingSettings,
-    couponResult.freeShipping
-  );
+
+  // Calculate Zone Delivery
+  let baseShipping = 0;
+  if (rawPincode && rawPincode.replace(/\D/g, '').length >= 3) {
+    const zoneSettings = await getZoneShippingSettings();
+    const zoneDelivery = calculateZoneDelivery(
+      standardSubtotal,
+      rawPincode,
+      zoneSettings,
+      couponResult.freeShipping
+    );
+    baseShipping = zoneDelivery.deliveryFee;
+  } else {
+    try {
+      const shippingSettings = await getShippingSettings();
+      baseShipping = calculateShippingCharge(subtotal, shippingSettings, couponResult.freeShipping);
+    } catch {
+      baseShipping = 0;
+    }
+  }
+
+  const shipping = baseShipping + lowMarginDeliveryTotal;
   const total = Math.max(0, subtotal - couponResult.discount + shipping);
 
   if (total < 1) {
-    throw new CheckoutPricingError('The payable amount must be at least ₹1 for online payment.');
+    throw new CheckoutPricingError('The payable amount must be at least ₹1.');
   }
 
   return {

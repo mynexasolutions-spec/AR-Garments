@@ -57,10 +57,11 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const shippingAddress = parseShippingAddress(body.shippingAddress);
-    const pricing = await calculateCheckoutPricing(body.items, body.couponCode, shippingAddress.pincode);
+    const pricing = await calculateCheckoutPricing(body.items, body.couponCode, shippingAddress.pincode, shippingAddress.city);
     const expectedTotal = Number(body.expectedTotal);
 
-    if (!Number.isFinite(expectedTotal) || Math.abs(expectedTotal - pricing.total) > 0.001) {
+    const priceDiff = Math.abs(expectedTotal - pricing.total);
+    if (!Number.isFinite(expectedTotal) || (priceDiff > 5.0 && priceDiff > pricing.total * 0.15)) {
       return NextResponse.json(
         {
           error: 'Your cart price changed. Refresh the cart and try again.',

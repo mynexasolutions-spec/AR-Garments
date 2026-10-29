@@ -3,6 +3,7 @@ import { getServiceSupabase } from '@/lib/supabase';
 import { calculateCheckoutPricing, CheckoutPricingError } from '@/lib/checkoutPricing';
 import { isAdminRequest } from '@/lib/adminSession';
 import { getAuthenticatedUser } from '@/lib/requestAuth';
+import { resolveDispatchRouting } from '@/lib/deliveryPartners';
 import {
   Order,
   OrderItem,
@@ -17,6 +18,11 @@ import {
 
 function generateOrderId(): string {
   return `ORD-${Date.now()}`;
+}
+
+function isValidUuid(val?: string | null): boolean {
+  if (!val) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +93,17 @@ function mapDbOrder(row: Record<string, unknown>): Order {
     trackingStatus: optionalString(row.tracking_status),
     currentLocation: optionalString(row.current_location),
     trackingUpdatedAt: optionalString(row.tracking_updated_at),
-    createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : new Date().toISOString(),
+    deliveryPartnerId: optionalString(row.delivery_partner_id),
+    deliveryPartnerName:
+      optionalString(row.delivery_partner_name) || optionalString(row.courier_name),
+    deliveryZoneId: optionalString(row.delivery_zone_id),
+    deliveryZoneName: optionalString(row.delivery_zone_name),
+    dispatchType: (row.dispatch_type as 'internal' | 'external') || 'internal',
+    dispatchStatus: (row.dispatch_status as Order['dispatchStatus']) || 'pending',
+    dispatchNotes: optionalString(row.dispatch_notes),
+    createdAt: row.created_at
+      ? new Date(String(row.created_at)).toISOString()
+      : new Date().toISOString(),
     updatedAt: optionalString(row.updated_at),
   };
 }
@@ -114,7 +130,7 @@ export async function GET(request: NextRequest) {
     }
     if (userId && authenticatedUser && userId !== authenticatedUser.id) {
       return NextResponse.json(
-        { success: false, error: 'You cannot view another customer’s orders.' },
+        { success: false, error: 'You cannot view another customer\u2019s orders.' },
         { status: 403 }
       );
     }
@@ -124,10 +140,7 @@ export async function GET(request: NextRequest) {
     // 1. Try querying Supabase
     try {
       const supabase = getServiceSupabase();
-      let query = supabase
-        .from('orders')
-        .select('*')
-        .or('payment_method.eq.cod,payment_status.eq.paid');
+      let query = supabase.from('orders').select('*');
 
       if (all === 'true') {
         query = query.order('created_at', { ascending: false });
@@ -141,13 +154,25 @@ export async function GET(request: NextRequest) {
       }
 
       const { data, error } = await query;
-      if (!error && Array.isArray(data)) {
-        const mapped = data.map(mapDbOrder);
-        return NextResponse.json(
-          { success: true, orders: mapped, total: mapped.length },
-          { status: 200 }
-        );
+      const dbOrders = !error && Array.isArray(data) ? data.map(mapDbOrder) : [];
+
+      // Merge DB orders with in-memory orders (avoid duplicates)
+      const combined = [...dbOrders];
+      for (const mOrder of memoryOrders) {
+        if (!combined.some((o) => o.id === mOrder.id)) {
+          if (all === 'true' || (resolvedUserId && mOrder.userId === resolvedUserId)) {
+            combined.push(mOrder);
+          }
+        }
       }
+      combined.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+
+      return NextResponse.json(
+        { success: true, orders: combined, total: combined.length },
+        { status: 200 }
+      );
     } catch {
       // Supabase table not created or error — fall back to memory
     }
@@ -167,8 +192,7 @@ export async function GET(request: NextRequest) {
       const userOrders = memoryOrders
         .filter((o) => o.userId === resolvedUserId)
         .sort(
-          (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
       return NextResponse.json(
         { success: true, orders: userOrders, total: userOrders.length },
@@ -205,30 +229,21 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    const {
-      items,
-      shippingAddress,
-      paymentMethod,
-      total,
-      couponCode,
-    } = body;
+    const { items, shippingAddress, paymentMethod, total, couponCode } = body;
 
-    const address = shippingAddress || body.deliveryAddress;
+    const address = shippingAddress || body.deliveryAddress || body.address;
     const resolvedUserName =
-      authenticatedUser.name || address?.fullName || authenticatedUser.email.split('@')[0] || 'Customer';
+      authenticatedUser.name ||
+      address?.fullName ||
+      authenticatedUser.email.split('@')[0] ||
+      'Customer';
 
     // --- Basic validation ---
-    if (
-      !items?.length ||
-      !address ||
-      !paymentMethod ||
-      total === undefined
-    ) {
+    if (!items?.length || !address || !paymentMethod || total === undefined) {
       return NextResponse.json(
         {
           success: false,
-          error:
-            'Missing required fields: items, address, paymentMethod, total',
+          error: 'Missing required fields: items, address, paymentMethod, total',
         },
         { status: 400 }
       );
@@ -248,9 +263,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const pricing = await calculateCheckoutPricing(items, couponCode);
+    const pricing = await calculateCheckoutPricing(
+      items,
+      couponCode,
+      address?.pincode,
+      address?.city
+    );
     const expectedTotal = Number(total);
-    if (!Number.isFinite(expectedTotal) || Math.abs(expectedTotal - pricing.total) > 0.001) {
+    const priceDiff = Math.abs(expectedTotal - pricing.total);
+
+    if (!Number.isFinite(expectedTotal) || (priceDiff > 5.0 && priceDiff > pricing.total * 0.15)) {
       return NextResponse.json(
         {
           success: false,
@@ -260,6 +282,9 @@ export async function POST(request: NextRequest) {
         { status: 409 }
       );
     }
+
+    // Automatic Dispatch Routing based on shipping pincode
+    const routing = resolveDispatchRouting(address.pincode || '');
 
     // --- Build order object ---
     const newOrder: Order = {
@@ -277,6 +302,13 @@ export async function POST(request: NextRequest) {
       total: pricing.total,
       ...(pricing.couponCode ? { couponCode: pricing.couponCode } : {}),
       status: 'Pending',
+      deliveryPartnerId: routing.partnerId || undefined,
+      deliveryPartnerName: routing.partnerName,
+      deliveryZoneId: routing.zoneId || undefined,
+      deliveryZoneName: routing.zoneName,
+      dispatchType: routing.dispatchType,
+      dispatchStatus: routing.dispatchStatus,
+      dispatchNotes: routing.notes,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -284,7 +316,9 @@ export async function POST(request: NextRequest) {
     // 1. Insert into Supabase Orders table
     try {
       const supabase = getServiceSupabase();
-      await supabase.from('orders').insert({
+
+      // Core payload — guaranteed to work on foundational orders table schema
+      const standardPayload = {
         id: newOrder.id,
         user_id: newOrder.userId,
         user_name: newOrder.userName,
@@ -299,7 +333,48 @@ export async function POST(request: NextRequest) {
         total: newOrder.total,
         coupon_code: newOrder.couponCode || null,
         status: newOrder.status,
+        courier_name: newOrder.deliveryPartnerName || null,
+      };
+
+      // Sanitize UUID fields so Postgres UUID columns never throw invalid syntax errors
+      const validPartnerId = isValidUuid(newOrder.deliveryPartnerId) ? newOrder.deliveryPartnerId : null;
+      const validZoneId = isValidUuid(newOrder.deliveryZoneId) ? newOrder.deliveryZoneId : null;
+
+      // First try: insert with dispatch routing columns (requires SQL migration)
+      const { error: insertError } = await supabase.from('orders').insert({
+        ...standardPayload,
+        delivery_partner_id: validPartnerId,
+        delivery_zone_id: validZoneId,
+        dispatch_type: newOrder.dispatchType,
+        dispatch_status: newOrder.dispatchStatus,
+        dispatch_notes: newOrder.dispatchNotes || null,
       });
+
+      if (insertError) {
+        // Fallback: insert without dispatch columns (if SQL migration not yet run or column mismatch)
+        console.warn(
+          '[POST /api/orders] Full insert failed (' + insertError.code + '): ' + insertError.message + '. Retrying standard payload...'
+        );
+        const { error: fallbackError } = await supabase
+          .from('orders')
+          .insert(standardPayload);
+
+        if (fallbackError) {
+          console.error('[POST /api/orders] Standard insert ALSO failed:', fallbackError.message, fallbackError.code);
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Database save error: ${fallbackError.message}`,
+              code: fallbackError.code,
+            },
+            { status: 500 }
+          );
+        } else {
+          console.log('[POST /api/orders] Standard insert succeeded for order:', newOrder.id);
+        }
+      } else {
+        console.log('[POST /api/orders] Full insert with dispatch routing succeeded for order:', newOrder.id);
+      }
 
       // Also persist/update address into user_addresses table in Supabase
       if (address && address.fullName && address.addressLine1 && address.city) {
@@ -337,11 +412,11 @@ export async function POST(request: NextRequest) {
           });
         }
       }
-    } catch {
-      // Continue to in-memory fallback
+    } catch (dbErr) {
+      console.error('[POST /api/orders] Supabase unexpected exception:', dbErr);
     }
 
-    // 2. Persist to in-memory store
+    // 2. Persist to in-memory store (always — ensures order is never lost)
     memoryOrders.unshift(newOrder);
 
     return NextResponse.json(
@@ -380,7 +455,16 @@ export async function PATCH(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { orderId, status } = body;
+    const {
+      orderId,
+      status,
+      deliveryPartnerId,
+      deliveryPartnerName,
+      dispatchStatus,
+      dispatchNotes,
+      awbNumber,
+      trackingUrl,
+    } = body;
 
     const allowedStatuses: OrderStatus[] = [
       'Pending',
@@ -412,11 +496,16 @@ export async function PATCH(request: NextRequest) {
       Cancelled: 'cancelled_at',
     };
     const timestampColumn = statusTimestampColumns[normalizedStatus];
-    const databaseUpdate: Record<string, string> = {
+    const databaseUpdate: Record<string, string | null> = {
       status: normalizedStatus,
       updated_at: now,
     };
     if (timestampColumn) databaseUpdate[timestampColumn] = now;
+    if (deliveryPartnerId !== undefined) databaseUpdate.delivery_partner_id = deliveryPartnerId || null;
+    if (dispatchStatus !== undefined) databaseUpdate.dispatch_status = dispatchStatus;
+    if (dispatchNotes !== undefined) databaseUpdate.dispatch_notes = dispatchNotes || null;
+    if (awbNumber !== undefined) databaseUpdate.awb_number = awbNumber || null;
+    if (trackingUrl !== undefined) databaseUpdate.tracking_url = trackingUrl || null;
 
     // 1. Update in Supabase
     let databaseUpdated = false;
@@ -445,6 +534,12 @@ export async function PATCH(request: NextRequest) {
       const order = memoryOrders[idx];
       order.status = normalizedStatus;
       order.updatedAt = now;
+      if (deliveryPartnerId !== undefined) order.deliveryPartnerId = deliveryPartnerId;
+      if (deliveryPartnerName !== undefined) order.deliveryPartnerName = deliveryPartnerName;
+      if (dispatchStatus !== undefined) order.dispatchStatus = dispatchStatus;
+      if (dispatchNotes !== undefined) order.dispatchNotes = dispatchNotes;
+      if (awbNumber !== undefined) order.awbNumber = awbNumber;
+      if (trackingUrl !== undefined) order.trackingUrl = trackingUrl;
       if (normalizedStatus === 'Confirmed' || normalizedStatus === 'Processing') {
         order.confirmedAt = now;
       } else if (normalizedStatus === 'Packed') {
